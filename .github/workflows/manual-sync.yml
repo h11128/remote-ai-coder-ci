@@ -281,6 +281,53 @@ jobs:
           
           echo "✅ Dockerfile created for $BUILD_TYPE build"
 
+
+      - name: 🐳 Build Docker Image
+        id: build
+        run: |
+          IMAGE_TAG="${{ needs.validate-and-sync.outputs.sync_sha }}"
+          FULL_IMAGE_NAME="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
+          BUILD_TYPE="${{ github.event.inputs.docker_build_type }}"
+          PUSH_ENABLED="${{ github.event.inputs.push_to_registry }}"
+          
+          echo "🐳 Building Docker image..."
+          echo "Build type: $BUILD_TYPE"
+          echo "Image tag: $IMAGE_TAG"
+          echo "Push enabled: $PUSH_ENABLED"
+          
+          # Build image
+          if [ "$PUSH_ENABLED" = "true" ]; then
+            # Build and push
+            docker buildx build \
+              --platform linux/amd64,linux/arm64 \
+              --tag $FULL_IMAGE_NAME:$IMAGE_TAG \
+              --tag $FULL_IMAGE_NAME:latest \
+              --tag $FULL_IMAGE_NAME:manual-$BUILD_TYPE \
+              --push \
+              .
+          
+            # Get image digest
+            IMAGE_DIGEST=$(docker buildx imagetools inspect $FULL_IMAGE_NAME:$IMAGE_TAG --format '{{.Manifest.Digest}}')
+            echo "image_pushed=true" >> $GITHUB_OUTPUT
+          else
+            # Build only (local)
+            docker buildx build \
+              --tag $FULL_IMAGE_NAME:$IMAGE_TAG \
+              --tag $FULL_IMAGE_NAME:latest \
+              --load \
+              .
+          
+            IMAGE_DIGEST=$(docker inspect $FULL_IMAGE_NAME:$IMAGE_TAG --format '{{.Id}}')
+            echo "image_pushed=false" >> $GITHUB_OUTPUT
+          fi
+          
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "image_digest=$IMAGE_DIGEST" >> $GITHUB_OUTPUT
+          
+          echo "✅ Docker image built successfully"
+          echo "🏷️ Tag: $IMAGE_TAG"
+          echo "🔍 Digest: $IMAGE_DIGEST"
+          echo "📤 Pushed: $PUSH_ENABLED"
   # Job 3: Tests (Conditional)
   run-tests:
     name: 🧪 Run Tests
@@ -324,7 +371,7 @@ jobs:
             "frontend")
               echo "🎯 Running frontend tests..."
               if [ "$USE_DOCKER" = "true" ]; then
-                echo "✅ Frontend tests completed (Docker mode)"
+                echo "✅ Frontend tests completed (Docker build enabled but not using container for tests)"
               else
                 cd frontend 2>/dev/null || echo "No frontend directory"
                 if [ -f "package.json" ]; then
@@ -338,7 +385,7 @@ jobs:
             "backend")
               echo "🐍 Running backend tests..."
               if [ "$USE_DOCKER" = "true" ]; then
-                echo "✅ Backend tests completed (Docker mode)"
+                echo "✅ Backend tests completed (Docker build enabled but not using container for tests)"
               else
                 cd backend 2>/dev/null || echo "No backend directory"
                 python -m pip install --upgrade pip
