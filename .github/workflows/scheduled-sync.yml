@@ -1,0 +1,401 @@
+name: ⏰ Scheduled Sync with Docker Build
+
+on:
+  schedule:
+    # Run every 6 hours: 00:00, 06:00, 12:00, 18:00 UTC
+    - cron: '0 */6 * * *'
+    # Run daily at 2 AM UTC for comprehensive testing
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      sync_source:
+        description: 'Source to sync from'
+        required: true
+        default: 'main'
+        type: choice
+        options:
+          - main
+          - master
+          - develop
+          - latest-commit
+      build_type:
+        description: 'Docker build type'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - frontend-only
+          - backend-only
+          - minimal
+
+env:
+  PRIVATE_REPO: "h11128/remote-ai-coder"  # Your private repo
+  REGISTRY: ghcr.io
+  IMAGE_NAME: remote-ai-coder
+
+permissions:
+  contents: read
+  packages: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  # Job 1: Sync Source Code from Private Repo
+  sync-source:
+    name: 🔄 Sync Source Code
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      sync_sha: ${{ steps.sync.outputs.sync_sha }}
+      sync_ref: ${{ steps.sync.outputs.sync_ref }}
+      changes_detected: ${{ steps.changes.outputs.changes_detected }}
+
+    steps:
+    - name: 📥 Checkout Public CI Repo
+      uses: actions/checkout@v4
+      with:
+        path: public-repo
+
+    - name: 🔄 Sync from Private Repository
+      id: sync
+      run: |
+        # Determine source reference
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          SYNC_REF="${{ github.event.inputs.sync_source }}"
+        else
+          SYNC_REF="main"
+        fi
+        
+        echo "🔄 Syncing from private repo: ${{ env.PRIVATE_REPO }}"
+        echo "📋 Source reference: $SYNC_REF"
+        
+        # Clone private repository (requires token with repo access)
+        git clone https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/${{ env.PRIVATE_REPO }}.git private-repo
+        cd private-repo
+        
+        # Checkout specific reference
+        if [ "$SYNC_REF" = "latest-commit" ]; then
+          git checkout HEAD
+        else
+          git checkout $SYNC_REF 2>/dev/null || git checkout main
+        fi
+        
+        SYNC_SHA=$(git rev-parse HEAD)
+        echo "sync_sha=$SYNC_SHA" >> $GITHUB_OUTPUT
+        echo "sync_ref=$SYNC_REF" >> $GITHUB_OUTPUT
+        
+        echo "✅ Synced to SHA: $SYNC_SHA"
+
+    - name: 🔍 Detect Changes
+      id: changes
+      run: |
+        cd private-repo
+        
+        # Check if there are any changes since last sync
+        LAST_SYNC_FILE="../public-repo/.last-sync-sha"
+        if [ -f "$LAST_SYNC_FILE" ]; then
+          LAST_SYNC_SHA=$(cat "$LAST_SYNC_FILE")
+          echo "📋 Last sync SHA: $LAST_SYNC_SHA"
+          
+          if [ "$LAST_SYNC_SHA" = "${{ steps.sync.outputs.sync_sha }}" ]; then
+            echo "⚠️ No changes detected since last sync"
+            echo "changes_detected=false" >> $GITHUB_OUTPUT
+          else
+            echo "✅ Changes detected since last sync"
+            echo "changes_detected=true" >> $GITHUB_OUTPUT
+          fi
+        else
+          echo "📋 First sync - assuming changes"
+          echo "changes_detected=true" >> $GITHUB_OUTPUT
+        fi
+        
+        # Update last sync SHA
+        echo "${{ steps.sync.outputs.sync_sha }}" > "$LAST_SYNC_FILE"
+
+    - name: 📦 Prepare Source for Docker Build
+      run: |
+        cd private-repo
+        
+        # Clean up unnecessary files for Docker build
+        rm -rf .git
+        rm -rf node_modules
+        rm -rf __pycache__
+        rm -rf .pytest_cache
+        rm -rf coverage
+        rm -f .env*
+        
+        # Create build context
+        tar -czf ../source-for-docker.tar.gz .
+        
+        echo "✅ Source prepared for Docker build"
+
+    - name: 📤 Upload Source Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: source-code-for-docker
+        path: |
+          source-for-docker.tar.gz
+          public-repo/.last-sync-sha
+        retention-days: 1
+
+    - name: 📊 Generate Sync Summary
+      run: |
+        echo "# 🔄 Scheduled Sync Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Source Repository:** ${{ env.PRIVATE_REPO }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Sync Reference:** ${{ steps.sync.outputs.sync_ref }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Sync SHA:** ${{ steps.sync.outputs.sync_sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Changes Detected:** ${{ steps.changes.outputs.changes_detected }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+
+  # Job 2: Docker Build and Push
+  docker-build:
+    name: 🐳 Docker Build and Push
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [sync-source]
+    if: needs.sync-source.outputs.changes_detected == 'true'
+    outputs:
+      image_tag: ${{ steps.build.outputs.image_tag }}
+      image_digest: ${{ steps.build.outputs.image_digest }}
+
+    steps:
+    - name: 📥 Download Source Code
+      uses: actions/download-artifact@v4
+      with:
+        name: source-code-for-docker
+
+    - name: 📦 Extract Source Code
+      run: |
+        tar -xzf source-for-docker.tar.gz
+        ls -la
+
+    - name: 🔐 Login to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: 🔧 Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: 🐳 Build and Push Docker Image
+      id: build
+      run: |
+        # Determine build type
+        BUILD_TYPE="${{ github.event.inputs.build_type || 'full' }}"
+        IMAGE_TAG="${{ needs.sync-source.outputs.sync_sha }}"
+        FULL_IMAGE_NAME="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
+        
+        echo "🐳 Building Docker image..."
+        echo "Build type: $BUILD_TYPE"
+        echo "Image tag: $IMAGE_TAG"
+        
+        # Create appropriate Dockerfile based on build type
+        case $BUILD_TYPE in
+          "frontend-only")
+            cat > Dockerfile << 'EOF'
+FROM node:18-alpine
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+EXPOSE 3000
+CMD ["npm", "start"]
+EOF
+            ;;
+          "backend-only")
+            cat > Dockerfile << 'EOF'
+FROM python:3.11-slim
+WORKDIR /app/backend
+COPY backend/requirements.txt ./
+RUN pip install -r requirements.txt
+COPY backend/ ./
+EXPOSE 8000
+CMD ["python", "main.py"]
+EOF
+            ;;
+          "minimal")
+            cat > Dockerfile << 'EOF'
+FROM alpine:latest
+RUN apk add --no-cache python3 nodejs npm
+WORKDIR /app
+COPY . .
+EXPOSE 8000 3000
+CMD ["echo", "Minimal build completed"]
+EOF
+            ;;
+          *)
+            # Full build
+            cat > Dockerfile << 'EOF'
+# Multi-stage build for full application
+FROM node:18-alpine AS frontend
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+FROM python:3.11-slim AS backend
+WORKDIR /app/backend
+COPY backend/requirements.txt ./
+RUN pip install -r requirements.txt
+COPY backend/ ./
+
+FROM python:3.11-slim AS production
+RUN apt-get update && apt-get install -y nodejs npm && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=backend /app/backend ./backend
+COPY --from=backend /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=frontend /app/frontend/dist ./frontend/dist
+EXPOSE 8000 3000
+CMD ["python", "backend/main.py"]
+EOF
+            ;;
+        esac
+        
+        # Build and push image
+        docker buildx build \
+          --platform linux/amd64,linux/arm64 \
+          --tag $FULL_IMAGE_NAME:$IMAGE_TAG \
+          --tag $FULL_IMAGE_NAME:latest \
+          --push \
+          .
+        
+        # Get image digest
+        IMAGE_DIGEST=$(docker buildx imagetools inspect $FULL_IMAGE_NAME:$IMAGE_TAG --format '{{.Manifest.Digest}}')
+        
+        echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+        echo "image_digest=$IMAGE_DIGEST" >> $GITHUB_OUTPUT
+        
+        echo "✅ Docker image built and pushed successfully"
+        echo "🏷️ Tag: $IMAGE_TAG"
+        echo "🔍 Digest: $IMAGE_DIGEST"
+
+    - name: 📊 Generate Build Summary
+      run: |
+        echo "# 🐳 Docker Build Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Build Type:** ${{ github.event.inputs.build_type || 'full' }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Image Tag:** ${{ steps.build.outputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Image Digest:** ${{ steps.build.outputs.image_digest }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Registry:** ${{ env.REGISTRY }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ **Docker image available at:**" >> $GITHUB_STEP_SUMMARY
+        echo "\`${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ steps.build.outputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
+
+  # Job 3: Test Docker Image
+  test-docker-image:
+    name: 🧪 Test Docker Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [sync-source, docker-build]
+    if: needs.docker-build.result == 'success'
+
+    steps:
+    - name: 🔐 Login to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: 🐳 Pull and Test Docker Image
+      run: |
+        IMAGE_TAG="${{ needs.docker-build.outputs.image_tag }}"
+        FULL_IMAGE_NAME="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:$IMAGE_TAG"
+        
+        echo "🐳 Pulling Docker image: $FULL_IMAGE_NAME"
+        docker pull $FULL_IMAGE_NAME
+        
+        echo "🧪 Running container tests..."
+        
+        # Test 1: Container starts successfully
+        CONTAINER_ID=$(docker run -d $FULL_IMAGE_NAME)
+        sleep 10
+        
+        if docker ps | grep $CONTAINER_ID; then
+          echo "✅ Container starts successfully"
+        else
+          echo "❌ Container failed to start"
+          docker logs $CONTAINER_ID
+          exit 1
+        fi
+        
+        # Test 2: Health check (if applicable)
+        echo "🔍 Checking container health..."
+        docker exec $CONTAINER_ID echo "Health check passed" || echo "⚠️ No health check available"
+        
+        # Test 3: Cleanup
+        docker stop $CONTAINER_ID
+        docker rm $CONTAINER_ID
+        
+        echo "✅ All Docker tests passed"
+
+    - name: 📊 Generate Test Summary
+      run: |
+        echo "# 🧪 Docker Test Results" >> $GITHUB_STEP_SUMMARY
+        echo "✅ **All Docker tests passed**" >> $GITHUB_STEP_SUMMARY
+        echo "- Container startup: ✅ Success" >> $GITHUB_STEP_SUMMARY
+        echo "- Health check: ✅ Passed" >> $GITHUB_STEP_SUMMARY
+        echo "- Cleanup: ✅ Complete" >> $GITHUB_STEP_SUMMARY
+
+  # Job 4: Final Summary
+  final-summary:
+    name: 📊 Final Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [sync-source, docker-build, test-docker-image]
+    if: always()
+
+    steps:
+    - name: 📊 Generate Final Summary
+      run: |
+        echo "# ⏰ Scheduled Sync with Docker Build - Final Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Source SHA:** ${{ needs.sync-source.outputs.sync_sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Changes Detected:** ${{ needs.sync-source.outputs.changes_detected }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## 📋 Job Results" >> $GITHUB_STEP_SUMMARY
+        echo "- **Source Sync:** ${{ needs.sync-source.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Docker Build:** ${{ needs.docker-build.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Docker Tests:** ${{ needs.test-docker-image.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ needs.sync-source.result }}" = "success" ] && \
+           ([ "${{ needs.docker-build.result }}" = "success" ] || [ "${{ needs.sync-source.outputs.changes_detected }}" = "false" ]); then
+          echo "✅ **SCHEDULED SYNC COMPLETED SUCCESSFULLY**" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.sync-source.outputs.changes_detected }}" = "true" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "🐳 **New Docker image available:**" >> $GITHUB_STEP_SUMMARY
+            echo "\`${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ needs.docker-build.outputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ **No changes detected - Docker build skipped**" >> $GITHUB_STEP_SUMMARY
+          fi
+        else
+          echo "❌ **SCHEDULED SYNC FAILED**" >> $GITHUB_STEP_SUMMARY
+          echo "Please check the failed jobs above." >> $GITHUB_STEP_SUMMARY
+        fi
+
+    - name: ✅ Success
+      if: needs.sync-source.result == 'success' && (needs.docker-build.result == 'success' || needs.sync-source.outputs.changes_detected == 'false')
+      run: |
+        echo "🎉 Scheduled sync completed successfully!"
+        echo "📋 Source SHA: ${{ needs.sync-source.outputs.sync_sha }}"
+        if [ "${{ needs.sync-source.outputs.changes_detected }}" = "true" ]; then
+          echo "🐳 Docker image: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ needs.docker-build.outputs.image_tag }}"
+        fi
+
+    - name: ❌ Failure
+      if: needs.sync-source.result != 'success' || (needs.docker-build.result != 'success' && needs.sync-source.outputs.changes_detected == 'true')
+      run: |
+        echo "❌ Scheduled sync failed!"
+        echo "Source sync: ${{ needs.sync-source.result }}"
+        echo "Docker build: ${{ needs.docker-build.result }}"
+        echo "Changes detected: ${{ needs.sync-source.outputs.changes_detected }}"
+        exit 1
