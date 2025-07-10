@@ -6,15 +6,15 @@ on:
       sync_source:
         description: 'Source branch/commit to sync'
         required: true
-        default: 'main'
+        default: 'master'
         type: string
-      
+
       enable_docker_build:
         description: 'Enable Docker build'
         required: true
         default: true
         type: boolean
-      
+
       docker_build_type:
         description: 'Docker build type (if enabled)'
         required: false
@@ -26,13 +26,13 @@ on:
           - backend-only
           - minimal
           - custom
-      
+
       run_tests:
         description: 'Run tests after sync/build'
         required: true
         default: true
         type: boolean
-      
+
       test_scope:
         description: 'Test scope'
         required: false
@@ -44,13 +44,13 @@ on:
           - backend-only
           - integration-only
           - smoke-tests
-      
+
       push_to_registry:
         description: 'Push Docker image to registry'
         required: false
         default: true
         type: boolean
-      
+
       custom_dockerfile:
         description: 'Custom Dockerfile content (for custom build type)'
         required: false

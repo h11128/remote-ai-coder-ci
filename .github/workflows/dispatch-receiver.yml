@@ -27,54 +27,54 @@ jobs:
       source_available: ${{ steps.extract.outputs.source_available }}
 
     steps:
-    - name: 📋 Display Dispatch Info
-      run: |
-        echo "# 📡 Repository Dispatch Received" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Source Repository:** ${{ github.event.client_payload.source_repo }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Source SHA:** ${{ github.event.client_payload.source_sha }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Branch:** ${{ github.event.client_payload.branch }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Trigger Event:** ${{ github.event.client_payload.trigger_event }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Commit Message:** ${{ github.event.client_payload.commit_message }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Author:** ${{ github.event.client_payload.author }}" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "## 🔍 Changes Detected" >> $GITHUB_STEP_SUMMARY
-        echo "- **Backend:** ${{ github.event.client_payload.backend_changed }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Frontend:** ${{ github.event.client_payload.frontend_changed }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Tests:** ${{ github.event.client_payload.tests_changed }}" >> $GITHUB_STEP_SUMMARY
+      - name: 📋 Display Dispatch Info
+        run: |
+          echo "# 📡 Repository Dispatch Received" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Source Repository:** ${{ github.event.client_payload.source_repo }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Source SHA:** ${{ github.event.client_payload.source_sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.event.client_payload.branch }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger Event:** ${{ github.event.client_payload.trigger_event }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit Message:** ${{ github.event.client_payload.commit_message }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Author:** ${{ github.event.client_payload.author }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔍 Changes Detected" >> $GITHUB_STEP_SUMMARY
+          echo "- **Backend:** ${{ github.event.client_payload.backend_changed }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Frontend:** ${{ github.event.client_payload.frontend_changed }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tests:** ${{ github.event.client_payload.tests_changed }}" >> $GITHUB_STEP_SUMMARY
 
-    - name: 📦 Extract Source Code
-      id: extract
-      run: |
-        if [ -n "${{ github.event.client_payload.source_payload }}" ]; then
-          echo "📦 Extracting source code from payload..."
-          echo "${{ github.event.client_payload.source_payload }}" | base64 -d > source-code.tar.gz
-          tar -xzf source-code.tar.gz
-          echo "source_available=true" >> $GITHUB_OUTPUT
-          echo "✅ Source code extracted successfully"
-          ls -la
-        else
-          echo "⚠️ No source payload available - using mock testing"
-          echo "source_available=false" >> $GITHUB_OUTPUT
+      - name: 📦 Extract Source Code
+        id: extract
+        run: |
+          if [ -n "${{ github.event.client_payload.source_payload }}" ]; then
+            echo "📦 Extracting source code from payload..."
+            echo "${{ github.event.client_payload.source_payload }}" | base64 -d > source-code.tar.gz
+            tar -xzf source-code.tar.gz
+            echo "source_available=true" >> $GITHUB_OUTPUT
+            echo "✅ Source code extracted successfully"
+            ls -la
+          else
+            echo "⚠️ No source payload available - using mock testing"
+            echo "source_available=false" >> $GITHUB_OUTPUT
           
-          # Create mock project structure for testing
-          mkdir -p frontend backend
-          echo '{"name": "test", "scripts": {"test": "echo \"Frontend tests passed\""}}' > frontend/package.json
-          echo 'print("Backend tests passed")' > backend/test_mock.py
-        fi
+            # Create mock project structure for testing
+            mkdir -p frontend backend
+            echo '{"name": "test", "scripts": {"test": "echo \"Frontend tests passed\""}}' > frontend/package.json
+            echo 'print("Backend tests passed")' > backend/test_mock.py
+          fi
 
-    - name: 📤 Upload Source Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: source-code
-        path: |
-          frontend/
-          backend/
-          *.json
-          *.txt
-          *.yml
-          *.yaml
-        retention-days: 1
+      - name: 📤 Upload Source Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-code
+          path: |
+            frontend/
+            backend/
+            *.json
+            *.txt
+            *.yml
+            *.yaml
+          retention-days: 1
 
   # Job 2: Frontend Tests (No Docker)
   frontend-tests:
@@ -85,51 +85,51 @@ jobs:
     if: needs.setup.outputs.frontend_changed == 'true' || needs.setup.outputs.tests_changed == 'true'
 
     steps:
-    - name: 📥 Download Source Code
-      uses: actions/download-artifact@v4
-      with:
-        name: source-code
+      - name: 📥 Download Source Code
+        uses: actions/download-artifact@v4
+        with:
+          name: source-code
 
-    - name: 📦 Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ env.NODE_VERSION }}
-        cache: 'npm'
-        cache-dependency-path: frontend/package-lock.json
+      - name: 📦 Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
 
-    - name: 🔧 Install Dependencies
-      run: |
-        cd frontend
-        if [ -f "package.json" ]; then
-          npm ci
-          echo "✅ Frontend dependencies installed"
-        else
-          echo "⚠️ No package.json found, creating mock"
-          npm init -y
-          npm install --save-dev jest
-        fi
+      - name: 🔧 Install Dependencies
+        run: |
+          cd frontend
+          if [ -f "package.json" ]; then
+            npm ci
+            echo "✅ Frontend dependencies installed"
+          else
+            echo "⚠️ No package.json found, creating mock"
+            npm init -y
+            npm install --save-dev jest
+          fi
 
-    - name: 🧪 Run Frontend Tests
-      run: |
-        cd frontend
-        if grep -q '"test"' package.json; then
-          echo "🧪 Running frontend tests..."
-          npm test -- --watchAll=false --coverage --ci
-          echo "✅ Frontend tests completed"
-        else
-          echo "⚠️ No test script found, running mock test"
-          echo "✅ Mock frontend tests passed"
-        fi
+      - name: 🧪 Run Frontend Tests
+        run: |
+          cd frontend
+          if grep -q '"test"' package.json; then
+            echo "🧪 Running frontend tests..."
+            npm test -- --watchAll=false --coverage --ci
+            echo "✅ Frontend tests completed"
+          else
+            echo "⚠️ No test script found, running mock test"
+            echo "✅ Mock frontend tests passed"
+          fi
 
-    - name: 📊 Upload Test Results
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: frontend-test-results
-        path: |
-          frontend/coverage/
-          frontend/test-results/
-        retention-days: 7
+      - name: 📊 Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-test-results
+          path: |
+            frontend/coverage/
+            frontend/test-results/
+          retention-days: 7
 
   # Job 3: Backend Tests (No Docker)
   backend-tests:
@@ -140,52 +140,52 @@ jobs:
     if: needs.setup.outputs.backend_changed == 'true' || needs.setup.outputs.tests_changed == 'true'
 
     steps:
-    - name: 📥 Download Source Code
-      uses: actions/download-artifact@v4
-      with:
-        name: source-code
+      - name: 📥 Download Source Code
+        uses: actions/download-artifact@v4
+        with:
+          name: source-code
 
-    - name: 🐍 Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
-        cache: 'pip'
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
 
-    - name: 📦 Install Dependencies
-      run: |
-        cd backend
-        python -m pip install --upgrade pip
-        if [ -f "requirements.txt" ]; then
-          pip install -r requirements.txt
-          echo "✅ Backend dependencies installed"
-        else
-          echo "⚠️ No requirements.txt found, installing basic packages"
-          pip install pytest pytest-cov fastapi
-        fi
+      - name: 📦 Install Dependencies
+        run: |
+          cd backend
+          python -m pip install --upgrade pip
+          if [ -f "requirements.txt" ]; then
+            pip install -r requirements.txt
+            echo "✅ Backend dependencies installed"
+          else
+            echo "⚠️ No requirements.txt found, installing basic packages"
+            pip install pytest pytest-cov fastapi
+          fi
 
-    - name: 🧪 Run Backend Tests
-      run: |
-        cd backend
-        if [ -d "tests" ] || ls test_*.py 1> /dev/null 2>&1; then
-          echo "🧪 Running backend tests..."
-          python -m pytest tests/ -v --cov=app --cov-report=xml --cov-report=html || \
-          python -m pytest . -v --cov=. --cov-report=xml --cov-report=html || \
-          echo "✅ Mock backend tests passed"
-        else
-          echo "⚠️ No tests found, running mock test"
-          python -c "print('✅ Mock backend tests passed')"
-        fi
+      - name: 🧪 Run Backend Tests
+        run: |
+          cd backend
+          if [ -d "tests" ] || ls test_*.py 1> /dev/null 2>&1; then
+            echo "🧪 Running backend tests..."
+            python -m pytest tests/ -v --cov=app --cov-report=xml --cov-report=html || \
+            python -m pytest . -v --cov=. --cov-report=xml --cov-report=html || \
+            echo "✅ Mock backend tests passed"
+          else
+            echo "⚠️ No tests found, running mock test"
+            python -c "print('✅ Mock backend tests passed')"
+          fi
 
-    - name: 📊 Upload Test Results
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: backend-test-results
-        path: |
-          backend/htmlcov/
-          backend/coverage.xml
-          backend/.coverage
-        retention-days: 7
+      - name: 📊 Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-results
+          path: |
+            backend/htmlcov/
+            backend/coverage.xml
+            backend/.coverage
+          retention-days: 7
 
   # Job 4: Integration Tests
   integration-tests:
@@ -196,28 +196,28 @@ jobs:
     if: always() && (needs.frontend-tests.result == 'success' || needs.backend-tests.result == 'success')
 
     steps:
-    - name: 📥 Download Source Code
-      uses: actions/download-artifact@v4
-      with:
-        name: source-code
+      - name: 📥 Download Source Code
+        uses: actions/download-artifact@v4
+        with:
+          name: source-code
 
-    - name: ⚡ Quick Integration Test
-      run: |
-        echo "🔗 Running integration tests..."
-        
-        # Mock integration test
-        echo "✅ API endpoints accessible"
-        echo "✅ Frontend-backend communication working"
-        echo "✅ Database connections established"
-        echo "✅ Integration tests passed"
+      - name: ⚡ Quick Integration Test
+        run: |
+          echo "🔗 Running integration tests..."
+          
+          # Mock integration test
+          echo "✅ API endpoints accessible"
+          echo "✅ Frontend-backend communication working"
+          echo "✅ Database connections established"
+          echo "✅ Integration tests passed"
 
-    - name: 📊 Generate Integration Summary
-      run: |
-        echo "# ⚡ Integration Test Results" >> $GITHUB_STEP_SUMMARY
-        echo "✅ **All integration tests passed**" >> $GITHUB_STEP_SUMMARY
-        echo "- API endpoints: ✅ Working" >> $GITHUB_STEP_SUMMARY
-        echo "- Frontend-backend: ✅ Connected" >> $GITHUB_STEP_SUMMARY
-        echo "- Database: ✅ Accessible" >> $GITHUB_STEP_SUMMARY
+      - name: 📊 Generate Integration Summary
+        run: |
+          echo "# ⚡ Integration Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **All integration tests passed**" >> $GITHUB_STEP_SUMMARY
+          echo "- API endpoints: ✅ Working" >> $GITHUB_STEP_SUMMARY
+          echo "- Frontend-backend: ✅ Connected" >> $GITHUB_STEP_SUMMARY
+          echo "- Database: ✅ Accessible" >> $GITHUB_STEP_SUMMARY
 
   # Job 5: Results Summary
   results-summary:
@@ -228,47 +228,47 @@ jobs:
     if: always()
 
     steps:
-    - name: 📊 Generate Final Summary
-      run: |
-        echo "# 📊 Repository Dispatch CI Results" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Source:** ${{ github.event.client_payload.source_repo }}" >> $GITHUB_STEP_SUMMARY
-        echo "**SHA:** ${{ github.event.client_payload.source_sha }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Branch:** ${{ github.event.client_payload.branch }}" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "## 📋 Test Results" >> $GITHUB_STEP_SUMMARY
-        echo "- **Setup:** ${{ needs.setup.result }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Frontend Tests:** ${{ needs.frontend-tests.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Backend Tests:** ${{ needs.backend-tests.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Integration Tests:** ${{ needs.integration-tests.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        # Determine overall status
-        if [ "${{ needs.setup.result }}" = "success" ] && \
-           ([ "${{ needs.frontend-tests.result }}" = "success" ] || [ "${{ needs.frontend-tests.result }}" = "skipped" ]) && \
-           ([ "${{ needs.backend-tests.result }}" = "success" ] || [ "${{ needs.backend-tests.result }}" = "skipped" ]) && \
-           ([ "${{ needs.integration-tests.result }}" = "success" ] || [ "${{ needs.integration-tests.result }}" = "skipped" ]); then
-          echo "✅ **ALL TESTS PASSED**" >> $GITHUB_STEP_SUMMARY
+      - name: 📊 Generate Final Summary
+        run: |
+          echo "# 📊 Repository Dispatch CI Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "🎉 Repository dispatch CI completed successfully!" >> $GITHUB_STEP_SUMMARY
-        else
-          echo "❌ **SOME TESTS FAILED**" >> $GITHUB_STEP_SUMMARY
+          echo "**Source:** ${{ github.event.client_payload.source_repo }}" >> $GITHUB_STEP_SUMMARY
+          echo "**SHA:** ${{ github.event.client_payload.source_sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.event.client_payload.branch }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Please check the failed jobs above." >> $GITHUB_STEP_SUMMARY
-        fi
+          echo "## 📋 Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "- **Setup:** ${{ needs.setup.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Frontend Tests:** ${{ needs.frontend-tests.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Backend Tests:** ${{ needs.backend-tests.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Integration Tests:** ${{ needs.integration-tests.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Determine overall status
+          if [ "${{ needs.setup.result }}" = "success" ] && \
+             ([ "${{ needs.frontend-tests.result }}" = "success" ] || [ "${{ needs.frontend-tests.result }}" = "skipped" ]) && \
+             ([ "${{ needs.backend-tests.result }}" = "success" ] || [ "${{ needs.backend-tests.result }}" = "skipped" ]) && \
+             ([ "${{ needs.integration-tests.result }}" = "success" ] || [ "${{ needs.integration-tests.result }}" = "skipped" ]); then
+            echo "✅ **ALL TESTS PASSED**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "🎉 Repository dispatch CI completed successfully!" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **SOME TESTS FAILED**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Please check the failed jobs above." >> $GITHUB_STEP_SUMMARY
+          fi
 
-    - name: ✅ Success
-      if: needs.setup.result == 'success' && (needs.frontend-tests.result == 'success' || needs.frontend-tests.result == 'skipped') && (needs.backend-tests.result == 'success' || needs.backend-tests.result == 'skipped')
-      run: |
-        echo "🎉 Repository dispatch CI completed successfully!"
-        echo "📡 Triggered from: ${{ github.event.client_payload.source_repo }}"
-        echo "✅ All tests passed or skipped appropriately"
+      - name: ✅ Success
+        if: needs.setup.result == 'success' && (needs.frontend-tests.result == 'success' || needs.frontend-tests.result == 'skipped') && (needs.backend-tests.result == 'success' || needs.backend-tests.result == 'skipped')
+        run: |
+          echo "🎉 Repository dispatch CI completed successfully!"
+          echo "📡 Triggered from: ${{ github.event.client_payload.source_repo }}"
+          echo "✅ All tests passed or skipped appropriately"
 
-    - name: ❌ Failure
-      if: needs.setup.result != 'success' || (needs.frontend-tests.result != 'success' && needs.frontend-tests.result != 'skipped') || (needs.backend-tests.result != 'success' && needs.backend-tests.result != 'skipped')
-      run: |
-        echo "❌ Repository dispatch CI failed!"
-        echo "Setup: ${{ needs.setup.result }}"
-        echo "Frontend: ${{ needs.frontend-tests.result }}"
-        echo "Backend: ${{ needs.backend-tests.result }}"
-        exit 1
+      - name: ❌ Failure
+        if: needs.setup.result != 'success' || (needs.frontend-tests.result != 'success' && needs.frontend-tests.result != 'skipped') || (needs.backend-tests.result != 'success' && needs.backend-tests.result != 'skipped')
+        run: |
+          echo "❌ Repository dispatch CI failed!"
+          echo "Setup: ${{ needs.setup.result }}"
+          echo "Frontend: ${{ needs.frontend-tests.result }}"
+          echo "Backend: ${{ needs.backend-tests.result }}"
+          exit 1

@@ -11,10 +11,10 @@ on:
       sync_source:
         description: 'Source to sync from'
         required: true
-        default: 'main'
+        default: 'master'
         type: choice
         options:
-          - main
+          - master
           - master
           - develop
           - latest-commit
@@ -64,7 +64,7 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             SYNC_REF="${{ github.event.inputs.sync_source }}"
           else
-            SYNC_REF="main"
+            SYNC_REF="master"
           fi
           
           echo "🔄 Syncing from private repo: ${{ env.PRIVATE_REPO }}"
