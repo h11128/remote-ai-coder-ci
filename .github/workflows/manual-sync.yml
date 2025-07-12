@@ -293,7 +293,6 @@ jobs:
           
           # Copy frontend build
           COPY --from=frontend-build /app/frontend/.next ./frontend/.next 2>/dev/null || true
-          COPY --from=frontend-build /app/frontend/public ./frontend/public 2>/dev/null || true
           COPY --from=frontend-build /app/frontend/package.json ./frontend/package.json
           
           EXPOSE 8000 3000
