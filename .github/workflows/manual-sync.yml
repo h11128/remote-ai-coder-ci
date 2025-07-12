@@ -215,7 +215,7 @@ jobs:
           FROM node:18-alpine AS build
           WORKDIR /app/frontend
           COPY frontend/package*.json ./
-          RUN npm ci
+          RUN npm ci --only=production
           COPY frontend/ ./
           RUN npm run build
           
@@ -292,8 +292,9 @@ jobs:
           COPY --from=backend-build /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
           
           # Copy frontend build
-          COPY --from=frontend-build /app/frontend/dist ./frontend/dist 2>/dev/null || true
           COPY --from=frontend-build /app/frontend/.next ./frontend/.next 2>/dev/null || true
+          COPY --from=frontend-build /app/frontend/public ./frontend/public 2>/dev/null || true
+          COPY --from=frontend-build /app/frontend/package.json ./frontend/package.json
           
           EXPOSE 8000 3000
           CMD ["python", "backend/main.py"]
@@ -326,7 +327,7 @@ jobs:
           if [ "$PUSH_ENABLED" = "true" ]; then
             # Build and push
             docker buildx build \
-              --platform linux/amd64,linux/arm64 \
+              --platform linux/amd64 \
               --tag $FULL_IMAGE_NAME:$IMAGE_TAG \
               --tag $FULL_IMAGE_NAME:latest \
               --tag $FULL_IMAGE_NAME:manual-$BUILD_TYPE \
