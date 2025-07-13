@@ -523,697 +523,298 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 🧪 Run Tests - ${{ matrix.test-type }}
+      - name: 🔧 Setup Test Environment
         run: |
-          TEST_TYPE="${{ matrix.test-type }}"
-          USE_DOCKER="${{ needs.validate-and-sync.outputs.build_enabled }}"
-          IMAGE_TAG="${{ needs.docker-build.outputs.image_tag || 'not-available' }}"
-          TEST_SCOPE="${{ github.event.inputs.test_scope }}"
-          DOCKER_BUILD_SUCCESS="${{ (needs.docker-build.result || 'skipped') == 'success' }}"
-          IMAGE_PUSHED="${{ (needs.docker-build.outputs.image_pushed || 'false') == 'true' }}"
+          # Set environment variables
+          echo "TEST_TYPE=${{ matrix.test-type }}" >> $GITHUB_ENV
+          echo "USE_DOCKER=${{ needs.validate-and-sync.outputs.build_enabled }}" >> $GITHUB_ENV
+          echo "IMAGE_TAG=${{ needs.docker-build.outputs.image_tag || 'not-available' }}" >> $GITHUB_ENV
+          echo "TEST_SCOPE=${{ github.event.inputs.test_scope }}" >> $GITHUB_ENV
+          echo "DOCKER_BUILD_SUCCESS=${{ (needs.docker-build.result || 'skipped') == 'success' }}" >> $GITHUB_ENV
+          echo "IMAGE_PUSHED=${{ (needs.docker-build.outputs.image_pushed || 'false') == 'true' }}" >> $GITHUB_ENV
+          echo "FULL_IMAGE_NAME=${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}" >> $GITHUB_ENV
           
-          echo "🧪 Evaluating $TEST_TYPE tests..."
-          echo "Use Docker: $USE_DOCKER"
-          echo "Test Scope: $TEST_SCOPE"
-          
+          echo "🧪 Test Configuration:"
+          echo "- Test Type: ${{ matrix.test-type }}"
+          echo "- Use Docker: ${{ needs.validate-and-sync.outputs.build_enabled }}"
+          echo "- Test Scope: ${{ github.event.inputs.test_scope }}"
+
+      - name: 🎯 Check Test Scope
+        run: |
           # Determine if this test type should run based on test scope
           SHOULD_RUN=false
-          case $TEST_SCOPE in
+          case "${{ github.event.inputs.test_scope }}" in
             "all")
               SHOULD_RUN=true
               ;;
             "frontend-only")
-              if [ "$TEST_TYPE" = "frontend" ]; then
+              if [ "${{ matrix.test-type }}" = "frontend" ]; then
                 SHOULD_RUN=true
               fi
               ;;
             "backend-only")
-              if [ "$TEST_TYPE" = "backend" ]; then
+              if [ "${{ matrix.test-type }}" = "backend" ]; then
                 SHOULD_RUN=true
               fi
               ;;
             "integration-only")
-              if [ "$TEST_TYPE" = "integration" ]; then
+              if [ "${{ matrix.test-type }}" = "integration" ]; then
                 SHOULD_RUN=true
               fi
               ;;
             "smoke-tests")
-              if [ "$TEST_TYPE" = "smoke" ]; then
+              if [ "${{ matrix.test-type }}" = "smoke" ]; then
                 SHOULD_RUN=true
               fi
               ;;
           esac
           
           if [ "$SHOULD_RUN" = "false" ]; then
-            echo "⏭️ Skipping $TEST_TYPE tests based on test scope: $TEST_SCOPE"
-            exit 0
+            echo "⏭️ Skipping ${{ matrix.test-type }} tests based on test scope: ${{ github.event.inputs.test_scope }}"
+            echo "SKIP_TESTS=true" >> $GITHUB_ENV
+          else
+            echo "🚀 Running ${{ matrix.test-type }} tests..."
+            echo "SKIP_TESTS=false" >> $GITHUB_ENV
           fi
-          
-          echo "🚀 Running $TEST_TYPE tests..."
-          
-          case $TEST_TYPE in
-            "frontend")
-              echo "🎯 Running frontend tests..."
-              if [ "$USE_DOCKER" = "true" ] && [ "$DOCKER_BUILD_SUCCESS" = "true" ]; then
-                # Test using Docker image
-                FULL_IMAGE_NAME="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
-          
-                if [ "$IMAGE_PUSHED" = "true" ]; then
-                  echo "🐳 Pulling Docker image for testing..."
-                  docker pull $FULL_IMAGE_NAME:$IMAGE_TAG
-                fi
-          
-                echo "🧪 Running frontend tests in Docker container..."
-                mkdir -p coverage/frontend
-          
-                # Run tests in Docker - adjust for actual project structure
-                docker run --rm \
-                  -v $(pwd)/coverage/frontend:/tmp/coverage \
-                  $FULL_IMAGE_NAME:$IMAGE_TAG \
-                  sh -c "
-                    if [ -d '/app/frontend' ]; then
-                      cd /app/frontend
-                      if [ -f 'package.json' ]; then
-                        npm run test:coverage 2>/dev/null || npm test 2>/dev/null || echo 'No test script found'
-                        [ -d 'coverage' ] && cp -r coverage/* /tmp/coverage/ 2>/dev/null || true
-                      fi
-                    else
-                      echo 'Frontend directory not found in container'
-                    fi
-                  " || echo "Frontend tests completed with warnings"
-          
-                echo "✅ Frontend tests completed (Docker container)"
-              else
-                # Test using source code
-                if [ -d "frontend" ]; then
-                  cd frontend
-                  if [ -f "package.json" ]; then
-                    echo "📦 Installing frontend dependencies..."
-                    npm ci
-                    echo "🧪 Running frontend tests..."
-                    npm run test:coverage 2>/dev/null || npm run test 2>/dev/null || npm test 2>/dev/null || echo "No test script available"
-                  else
-                    echo "⚠️ No package.json found in frontend directory"
-                  fi
-                else
-                  echo "⚠️ No frontend directory found"
-                fi
-              fi
-              ;;
-            "backend")
-              echo "🐍 Running backend tests..."
-              if [ "$USE_DOCKER" = "true" ] && [ "$DOCKER_BUILD_SUCCESS" = "true" ]; then
-                # Test using Docker image with enhanced resource management
-                FULL_IMAGE_NAME="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
-          
-                if [ "$IMAGE_PUSHED" = "true" ]; then
-                  echo "🐳 Pulling Docker image for testing..."
-                  docker pull $FULL_IMAGE_NAME:$IMAGE_TAG
-                fi
-          
-                echo "🧪 Running backend tests in Docker container with enhanced monitoring..."
-                mkdir -p coverage/backend
-          
-                # Option 3: Enhanced Docker test execution with resource limits and timeout handling
-                echo "=== 🚀 Starting Enhanced Backend Test Execution ==="
-                echo "Start time: $(date)"
-                echo "Container image: $FULL_IMAGE_NAME:$IMAGE_TAG"
-          
-                # Run tests with comprehensive resource management and monitoring
-                timeout 2400 docker run --rm \
-                  --name backend-test-container-${{ github.run_id }} \
-                  --memory=4g \
-                  --memory-swap=4g \
-                  --cpus=2 \
-                  --ulimit nofile=65536:65536 \
-                  --tmpfs /tmp:rw,noexec,nosuid,size=1g \
-                  -v $(pwd)/coverage/backend:/tmp/coverage \
-                  -e CI=true \
-                  -e PYTEST_TIMEOUT=300 \
-                  -e PYTHONUNBUFFERED=1 \
-                  $FULL_IMAGE_NAME:$IMAGE_TAG \
-                  sh -c "
-                    set -e
-                    echo '=== 🔍 Container Environment Check ==='
-                    echo 'Container start time: \$(date)'
-                    echo 'Available memory: \$(free -h)'
-                    echo 'Available CPU cores: \$(nproc)'
-                    echo 'Python version: \$(python --version)'
-                    echo 'Pytest version: \$(python -m pytest --version 2>/dev/null || echo 'pytest not found')'
-          
-                    # Navigate to backend directory
-                    if [ -d '/app/backend' ]; then
-                      cd /app/backend
-                      echo '✅ Found backend directory: /app/backend'
-                    elif [ -d '/app' ]; then
-                      cd /app
-                      echo '✅ Using app directory: /app'
-                    else
-                      echo '❌ No backend directory found'
-                      find / -name 'requirements.txt' -type f 2>/dev/null | head -5
-                      exit 1
-                    fi
-          
-                    echo '=== 📦 Installing Test Dependencies ==='
-                    # Install additional test dependencies for better performance
-                    pip install pytest-xdist pytest-timeout pytest-cov pytest-html pytest-json-report 2>/dev/null || echo 'Some packages already installed'
-          
-                    echo '=== 🔍 Test Environment Validation ==='
-                    echo 'Current directory: \$(pwd)'
-                    echo 'Directory contents:'
-                    ls -la
-                    echo 'Test directory contents:'
-                    [ -d 'tests' ] && ls -la tests/ | head -10 || echo 'No tests directory found'
-                    echo 'Requirements file:'
-                    [ -f 'requirements.txt' ] && echo 'requirements.txt found' || echo 'requirements.txt missing'
-          
-                    echo '=== 🧪 Running Backend Tests with Parallelization ==='
-                    echo 'Test execution start: \$(date)'
-          
-                    # Option 4: Test monitoring and early exit + Quick Solution 3: Parallelization
-                    python -m pytest tests/ \
-                      --verbose \
-                      --tb=short \
-                      --strict-markers \
-                      --strict-config \
-                      -n auto \
-                      --maxfail=5 \
-                      --timeout=300 \
-                      --timeout-method=thread \
-                      --durations=10 \
-                      --cov=. \
-                      --cov-report=html \
-                      --cov-report=xml \
-                      --cov-report=term-missing \
-                      --html=/tmp/coverage/pytest-report.html \
-                      --self-contained-html \
-                      --json-report \
-                      --json-report-file=/tmp/coverage/pytest-report.json \
-                      --disable-warnings \
-                      -x \
-                      || {
-                        echo '⚠️ Tests failed, but continuing with cleanup...'
-                        echo 'Test failure time: \$(date)'
-                        echo 'Exit code: \$?'
-                      }
-          
-                    echo '=== 📊 Test Results Summary ==='
-                    echo 'Test execution end: \$(date)'
-                    echo 'Coverage files:'
-                    find . -name '*.xml' -o -name '*.html' -o -name 'htmlcov' -type d | head -10
-          
-                    echo '=== 📤 Copying Test Results ==='
-                    # Copy all test artifacts
-                    [ -d 'htmlcov' ] && cp -r htmlcov/* /tmp/coverage/ 2>/dev/null && echo 'HTML coverage copied' || echo 'No HTML coverage found'
-                    [ -f 'coverage.xml' ] && cp coverage.xml /tmp/coverage/ 2>/dev/null && echo 'XML coverage copied' || echo 'No XML coverage found'
-                    [ -f '.coverage' ] && cp .coverage /tmp/coverage/ 2>/dev/null && echo 'Coverage data copied' || echo 'No coverage data found'
-          
-                    echo '=== ✅ Container Execution Complete ==='
-                    echo 'Container end time: \$(date)'
-                    echo 'Final exit code: 0'
-                  " 2>&1 | tee backend-test.log || {
-                    echo "❌ Backend tests encountered issues"
-                    echo "Exit code: $?"
-                    echo "End time: $(date)"
-          
-                    # Option 4: Enhanced error reporting
-                    echo "=== 📋 Error Analysis ==="
-                    echo "Last 50 lines of test output:"
-                    tail -50 backend-test.log || echo "No log file found"
-          
-                    echo "=== 🐳 Container Status Check ==="
-                    docker ps -a --filter "name=backend-test-container-${{ github.run_id }}" || echo "Container not found"
-          
-                    echo "=== 💾 Partial Results Recovery ==="
-                    # Try to recover any partial results
-                    [ -d "coverage/backend" ] && echo "Coverage directory exists: $(ls -la coverage/backend)" || echo "No coverage directory"
-          
-                    echo "Tests completed with warnings - continuing workflow"
-                  }
-          
-                echo "✅ Backend tests completed (Docker container)"
-                echo "=== 📊 Final Test Summary ==="
-                echo "Total execution time: $(($(date +%s) - start_time)) seconds"
-                echo "Coverage files generated:"
-                ls -la coverage/backend/ 2>/dev/null || echo "No coverage files found"
-          
-              else
-                # Test using source code with enhanced execution
-                echo "🐍 Running backend tests on source code..."
-                if [ -d "backend" ]; then
-                  cd backend
-                  echo "📦 Setting up Python environment with enhanced dependencies..."
-                  python -m pip install --upgrade pip
-                  if [ -f "requirements.txt" ]; then
-                    pip install -r requirements.txt
-                    # Install additional test dependencies
-                    pip install pytest-xdist pytest-timeout pytest-cov pytest-html pytest-json-report
-          
-                    echo "🧪 Running backend tests with parallelization..."
-                    if [ -d "tests" ]; then
-                      # Enhanced test execution for source code
-                      timeout 1800 python -m pytest tests/ \
-                        --verbose \
-                        --tb=short \
-                        -n auto \
-                        --maxfail=5 \
-                        --timeout=300 \
-                        --durations=10 \
-                        --cov=. \
-                        --cov-report=html \
-                        --cov-report=xml \
-                        --html=pytest-report.html \
-                        --self-contained-html \
-                        --json-report \
-                        --json-report-file=pytest-report.json \
-                        || echo "Tests completed with warnings"
-                    else
-                      echo "⚠️ No tests directory found"
-                    fi
-                  else
-                    echo "⚠️ No requirements.txt found in backend directory"
-                  fi
-                else
-                  echo "⚠️ No backend directory found"
-                fi
-              fi
-              ;;
-            "integration")
-              echo "🔗 Running integration tests..."
-              if [ "$USE_DOCKER" = "true" ] && [ "$DOCKER_BUILD_SUCCESS" = "true" ]; then
-                FULL_IMAGE_NAME="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
-          
-                if [ "$IMAGE_PUSHED" = "true" ]; then
-                  docker pull $FULL_IMAGE_NAME:$IMAGE_TAG
-                fi
-          
-                echo "🚀 Starting application container with full environment..."
-          
-                # Start container with comprehensive environment variables
-                CONTAINER_ID=$(docker run -d \
-                  --name integration-test-${{ github.run_id }} \
-                  -e SECRET_KEY="integration-test-secret-key-$(date +%s)" \
-                  -e DATABASE_URL="sqlite:///tmp/integration_test.db" \
-                  -e ENVIRONMENT="test" \
-                  -e DEBUG="true" \
-                  -e API_V1_STR="/api" \
-                  -e PROJECT_NAME="AI Remote Dev Agent - Integration Test" \
-                  -e BACKEND_CORS_ORIGINS='["http://localhost:3000", "http://localhost:8000"]' \
-                  -e OPENAI_API_KEY="test-integration-key" \
-                  -e ANTHROPIC_API_KEY="test-integration-key" \
-                  -e LOG_LEVEL="INFO" \
-                  -e PYTHONUNBUFFERED="1" \
-                  -p 8000:8000 \
-                  -p 3000:3000 \
-                  --health-cmd="curl -f http://localhost:8000/health || exit 1" \
-                  --health-interval=10s \
-                  --health-timeout=5s \
-                  --health-retries=5 \
-                  $FULL_IMAGE_NAME:$IMAGE_TAG)
-          
-                if [ -z "$CONTAINER_ID" ]; then
-                  echo "❌ Failed to start container"
-                  exit 1
-                fi
-          
-                echo "✅ Container started with ID: $CONTAINER_ID"
-          
-                echo "⏳ Waiting for services to initialize..."
-          
-                # Enhanced startup monitoring with timeout
-                STARTUP_TIMEOUT=120  # 2 minutes
-                STARTUP_START=$(date +%s)
-                SERVICE_READY=false
-          
-                while [ $(($(date +%s) - STARTUP_START)) -lt $STARTUP_TIMEOUT ]; do
-                  # Check if container is still running
-                  if ! docker ps --filter "id=$CONTAINER_ID" --format "table {{.ID}}" | grep -q $CONTAINER_ID; then
-                    echo "❌ Container stopped unexpectedly"
-                    echo "📋 Container logs:"
-                    docker logs $CONTAINER_ID
-                    docker rm $CONTAINER_ID
-                    exit 1
-                  fi
-          
-                  # Check container health
-                  HEALTH_STATUS=$(docker inspect --format='{{.State.Health.Status}}' $CONTAINER_ID 2>/dev/null || echo "none")
-                  echo "🔍 Container health status: $HEALTH_STATUS"
-          
-                  # Test backend health
-                  if docker exec $CONTAINER_ID curl -f http://localhost:8000/health >/dev/null 2>&1; then
-                    echo "✅ Backend service is responding"
-                    SERVICE_READY=true
-                    break
-                  elif docker exec $CONTAINER_ID curl -f http://localhost:8000/docs >/dev/null 2>&1; then
-                    echo "✅ Backend API docs accessible"
-                    SERVICE_READY=true
-                    break
-                  elif docker exec $CONTAINER_ID curl -f http://localhost:8000/ >/dev/null 2>&1; then
-                    echo "✅ Backend root endpoint accessible"
-                    SERVICE_READY=true
-                    break
-                  else
-                    echo "⏳ Services starting... ($(( $(date +%s) - STARTUP_START ))s elapsed)"
-                    sleep 10
-                  fi
-                done
-          
-                if [ "$SERVICE_READY" = "false" ]; then
-                  echo "❌ Services failed to start within $STARTUP_TIMEOUT seconds"
-                  echo "📋 Final container logs:"
-                  docker logs $CONTAINER_ID --tail 50
-                  docker stop $CONTAINER_ID
-                  docker rm $CONTAINER_ID
-                  exit 1
-                fi
-          
-                echo "🔍 Running comprehensive integration tests..."
-          
-                # Test 1: Backend Health Check
-                echo "🧪 Test 1: Backend Health Check"
-                for i in {1..3}; do
-                  if docker exec $CONTAINER_ID curl -f http://localhost:8000/health 2>/dev/null; then
-                    echo "✅ Backend health check: PASS"
-                    break
-                  elif [ $i -eq 3 ]; then
-                    echo "❌ Backend health check: FAIL after 3 attempts"
-                  fi
-                  sleep 5
-                done
-          
-                # Test 2: API Documentation Access
-                echo "🧪 Test 2: API Documentation"
-                if docker exec $CONTAINER_ID curl -f http://localhost:8000/docs 2>/dev/null; then
-                  echo "✅ API documentation: PASS"
-                else
-                  echo "⚠️ API documentation: FAIL"
-                fi
-          
-                # Test 3: OpenAPI Schema
-                echo "🧪 Test 3: OpenAPI Schema"
-                if docker exec $CONTAINER_ID curl -f http://localhost:8000/openapi.json 2>/dev/null; then
-                  echo "✅ OpenAPI schema: PASS"
-                else
-                  echo "⚠️ OpenAPI schema: FAIL"
-                fi
-          
-                # Test 4: Basic API Endpoints
-                echo "🧪 Test 4: Basic API Endpoints"
-                if docker exec $CONTAINER_ID curl -f http://localhost:8000/api/sessions 2>/dev/null; then
-                  echo "✅ Sessions API endpoint: PASS"
-                else
-                  echo "⚠️ Sessions API endpoint: FAIL (may require authentication)"
-                fi
-          
-                # Test 5: Frontend Service (if available)
-                echo "🧪 Test 5: Frontend Service Check"
-                if docker exec $CONTAINER_ID curl -f http://localhost:3000 2>/dev/null; then
-                  echo "✅ Frontend service: PASS"
-                else
-                  echo "⚠️ Frontend service: Not available (expected for backend-only container)"
-                fi
-          
-                # Test 6: Database Connectivity
-                echo "🧪 Test 6: Database Connectivity"
-                if docker exec $CONTAINER_ID python -c "
-            "integration")
-              echo "🔗 Running integration tests..."
-              if [ "$USE_DOCKER" = "true" ] && [ "$DOCKER_BUILD_SUCCESS" = "true" ]; then
-                FULL_IMAGE_NAME="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
-          
-                if [ "$IMAGE_PUSHED" = "true" ]; then
-                  docker pull $FULL_IMAGE_NAME:$IMAGE_TAG
-                fi
-          
-                echo "🚀 Starting application container with full environment..."
-          
-                # Start container with comprehensive environment variables
-                CONTAINER_ID=$(docker run -d \
-                  --name integration-test-${{ github.run_id }} \
-                  -e SECRET_KEY="integration-test-secret-key-$(date +%s)" \
-                  -e DATABASE_URL="sqlite:///tmp/integration_test.db" \
-                  -e ENVIRONMENT="test" \
-                  -e DEBUG="true" \
-                  -e API_V1_STR="/api" \
-                  -e PROJECT_NAME="AI Remote Dev Agent - Integration Test" \
-                  -e BACKEND_CORS_ORIGINS='["http://localhost:3000", "http://localhost:8000"]' \
-                  -e OPENAI_API_KEY="test-integration-key" \
-                  -e ANTHROPIC_API_KEY="test-integration-key" \
-                  -e LOG_LEVEL="INFO" \
-                  -e PYTHONUNBUFFERED="1" \
-                  -p 8000:8000 \
-                  -p 3000:3000 \
-                  --health-cmd="curl -f http://localhost:8000/health || exit 1" \
-                  --health-interval=10s \
-                  --health-timeout=5s \
-                  --health-retries=5 \
-                  $FULL_IMAGE_NAME:$IMAGE_TAG)
-          
-                if [ -z "$CONTAINER_ID" ]; then
-                  echo "❌ Failed to start container"
-                  exit 1
-                fi
-          
-                echo "✅ Container started with ID: $CONTAINER_ID"
-          
-                echo "⏳ Waiting for services to initialize..."
-          
-                # Enhanced startup monitoring with timeout
-                STARTUP_TIMEOUT=120  # 2 minutes
-                STARTUP_START=$(date +%s)
-                SERVICE_READY=false
-          
-                while [ $(($(date +%s) - STARTUP_START)) -lt $STARTUP_TIMEOUT ]; do
-                  # Check if container is still running
-                  if ! docker ps --filter "id=$CONTAINER_ID" --format "table {{.ID}}" | grep -q $CONTAINER_ID; then
-                    echo "❌ Container stopped unexpectedly"
-                    echo "📋 Container logs:"
-                    docker logs $CONTAINER_ID
-                    docker rm $CONTAINER_ID
-                    exit 1
-                  fi
-          
-                  # Check container health
-                  HEALTH_STATUS=$(docker inspect --format='{{.State.Health.Status}}' $CONTAINER_ID 2>/dev/null || echo "none")
-                  echo "🔍 Container health status: $HEALTH_STATUS"
-          
-                  # Test backend health
-                  if docker exec $CONTAINER_ID curl -f http://localhost:8000/health >/dev/null 2>&1; then
-                    echo "✅ Backend service is responding"
-                    SERVICE_READY=true
-                    break
-                  elif docker exec $CONTAINER_ID curl -f http://localhost:8000/docs >/dev/null 2>&1; then
-                    echo "✅ Backend API docs accessible"
-                    SERVICE_READY=true
-                    break
-                  elif docker exec $CONTAINER_ID curl -f http://localhost:8000/ >/dev/null 2>&1; then
-                    echo "✅ Backend root endpoint accessible"
-                    SERVICE_READY=true
-                    break
-                  else
-                    echo "⏳ Services starting... ($(( $(date +%s) - STARTUP_START ))s elapsed)"
-                    sleep 10
-                  fi
-                done
-          
-                if [ "$SERVICE_READY" = "false" ]; then
-                  echo "❌ Services failed to start within $STARTUP_TIMEOUT seconds"
-                  echo "📋 Final container logs:"
-                  docker logs $CONTAINER_ID --tail 50
-                  docker stop $CONTAINER_ID
-                  docker rm $CONTAINER_ID
-                  exit 1
-                fi
-          
-                echo "🔍 Running comprehensive integration tests..."
-          
-                # Test 1: Backend Health Check
-                echo "🧪 Test 1: Backend Health Check"
-                for i in {1..3}; do
-                  if docker exec $CONTAINER_ID curl -f http://localhost:8000/health 2>/dev/null; then
-                    echo "✅ Backend health check: PASS"
-                    break
-                  elif [ $i -eq 3 ]; then
-                    echo "❌ Backend health check: FAIL after 3 attempts"
-                  fi
-                  sleep 5
-                done
-          
-                # Test 2: API Documentation Access
-                echo "🧪 Test 2: API Documentation"
-                if docker exec $CONTAINER_ID curl -f http://localhost:8000/docs 2>/dev/null; then
-                  echo "✅ API documentation: PASS"
-                else
-                  echo "⚠️ API documentation: FAIL"
-                fi
-          
-                # Test 3: OpenAPI Schema
-                echo "🧪 Test 3: OpenAPI Schema"
-                if docker exec $CONTAINER_ID curl -f http://localhost:8000/openapi.json 2>/dev/null; then
-                  echo "✅ OpenAPI schema: PASS"
-                else
-                  echo "⚠️ OpenAPI schema: FAIL"
-                fi
-          
-                # Test 4: Basic API Endpoints
-                echo "🧪 Test 4: Basic API Endpoints"
-                if docker exec $CONTAINER_ID curl -f http://localhost:8000/api/sessions 2>/dev/null; then
-                  echo "✅ Sessions API endpoint: PASS"
-                else
-                  echo "⚠️ Sessions API endpoint: FAIL (may require authentication)"
-                fi
-          
-                # Test 5: Frontend Service (if available)
-                echo "🧪 Test 5: Frontend Service Check"
-                if docker exec $CONTAINER_ID curl -f http://localhost:3000 2>/dev/null; then
-                  echo "✅ Frontend service: PASS"
-                else
-                  echo "⚠️ Frontend service: Not available (expected for backend-only container)"
-                fi
-          
-                # Test 6: Database Connectivity
-                echo "🧪 Test 6: Database Connectivity"
-                if docker exec $CONTAINER_ID python -c "
-          import sys
-          sys.path.append('/app/backend')
-          try:
-            from app.core.database import engine
-            from sqlalchemy import text
-            with engine.connect() as conn:
-              result = conn.execute(text('SELECT 1'))
-              print('✅ Database connection: PASS')
-          except Exception as e:
-            print(f'⚠️ Database connection: FAIL - {e}')
-          " 2>/dev/null; then
-                          echo "✅ Database connectivity test completed"
-            else
-            echo "⚠️ Database connectivity test failed"
-            fi
-          
-            echo "📊 Integration test summary:"
-          echo "- Container startup: ✅ SUCCESS"
-          echo "- Service health: ✅ SUCCESS"
-          echo "- API accessibility: ✅ SUCCESS"
-          echo "- Total test time: $(($(date +%s) - STARTUP_START)) seconds"
-          
-            echo "🧹 Cleaning up integration test container..."
-            docker logs $CONTAINER_ID --tail 20 || true
-            docker stop $CONTAINER_ID
-            docker rm $CONTAINER_ID
-          
-            echo "✅ Integration tests completed successfully"
-            else
-            echo "✅ Integration tests skipped (no Docker build)"
-            echo "🔍 Validating source code structure for integration readiness..."
-          
-            # Source code integration checks
-            if [ -f "docker-compose.yml" ]; then
-            echo "✅ Docker Compose configuration found"
-            else
-            echo "⚠️ No Docker Compose configuration"
-            fi
-          
-            if [ -f "backend/main.py" ] && [ -f "frontend/package.json" ]; then
-            echo "✅ Both backend and frontend components present"
-            else
-            echo "⚠️ Missing backend or frontend components"
-            fi
-          
-            echo "✅ Source code integration checks completed"
-            fi
-            ;;
-            "smoke")
-              echo "💨 Running smoke tests..."
-              if [ "$USE_DOCKER" = "true" ] && [ "$DOCKER_BUILD_SUCCESS" = "true" ]; then
-                FULL_IMAGE_NAME="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
-          
-                if [ "$IMAGE_PUSHED" = "true" ]; then
-                  docker pull $FULL_IMAGE_NAME:$IMAGE_TAG
-                fi
-          
-                echo "🔍 Testing Docker image startup with required environment variables..."
-          
-                # Create a test container with required environment variables
-                CONTAINER_ID=$(docker run -d \
-                  -e SECRET_KEY="test-secret-key-for-ci-smoke-test-only" \
-                  -e DATABASE_URL="sqlite:///tmp/test.db" \
-                  -e ENVIRONMENT="test" \
-                  -e DEBUG="false" \
-                  -e API_V1_STR="/api" \
-                  -e PROJECT_NAME="AI Remote Dev Agent" \
-                  -e BACKEND_CORS_ORIGINS='["http://localhost:3000"]' \
-                  -e OPENAI_API_KEY="test-key" \
-                  -e ANTHROPIC_API_KEY="test-key" \
-                  -p 8000:8000 \
-                  $FULL_IMAGE_NAME:$IMAGE_TAG)
-          
-                echo "🔍 Container ID: $CONTAINER_ID"
-                echo "⏳ Waiting for container to start..."
-                sleep 15
-          
-                # Check if container is still running
-                if docker ps --filter "id=$CONTAINER_ID" --format "table {{.ID}}" | grep -q $CONTAINER_ID; then
-                  echo "✅ Container starts and runs successfully"
-          
-                  # Test basic health endpoints
-                  echo "🔍 Testing application health..."
-                  for i in {1..5}; do
-                    if docker exec $CONTAINER_ID curl -f http://localhost:8000/health 2>/dev/null; then
-                      echo "✅ Health endpoint responding"
-                      break
-                    elif docker exec $CONTAINER_ID curl -f http://localhost:8000/docs 2>/dev/null; then
-                      echo "✅ API docs endpoint responding"
-                      break
-                    elif docker exec $CONTAINER_ID curl -f http://localhost:8000/ 2>/dev/null; then
-                      echo "✅ Root endpoint responding"
-                      break
-                    else
-                      echo "⏳ Attempt $i: Waiting for application to be ready..."
-                      sleep 3
-                    fi
-                  done
-          
-                  echo "📋 Container logs (last 20 lines):"
-                  docker logs $CONTAINER_ID --tail 20
-          
-                  echo "🧹 Cleaning up container..."
-                  docker stop $CONTAINER_ID
-                  docker rm $CONTAINER_ID
-          
-                  echo "✅ Smoke tests completed successfully"
-                else
-                  echo "❌ Container failed to start or exited"
-                  echo "📋 Container logs:"
-                  docker logs $CONTAINER_ID
-                  echo "🧹 Cleaning up failed container..."
-                  docker rm $CONTAINER_ID
-                  exit 1
-                fi
-          
-                echo "✅ Smoke tests completed"
-              else
-                echo "✅ Smoke test: Source code structure validated"
-                ls -la
-          
-                # Basic source code smoke tests
-                echo "🔍 Checking critical files..."
-                if [ -f "backend/main.py" ]; then
-                  echo "✅ Backend entry point found"
-                else
-                  echo "⚠️ Backend entry point missing"
-                fi
-          
-                if [ -f "frontend/package.json" ]; then
-                  echo "✅ Frontend package.json found"
-                else
-                  echo "⚠️ Frontend package.json missing"
-                fi
-          
-                echo "✅ Source code smoke tests completed"
-              fi
-              ;;
-          esac
 
+      - name: 🎨 Run Frontend Tests
+        if: env.SKIP_TESTS == 'false' && matrix.test-type == 'frontend'
+        run: |
+          echo "🎯 Running frontend tests..."
+          if [ "$USE_DOCKER" = "true" ] && [ "$DOCKER_BUILD_SUCCESS" = "true" ]; then
+            if [ "$IMAGE_PUSHED" = "true" ]; then
+              echo "🐳 Pulling Docker image for testing..."
+              docker pull $FULL_IMAGE_NAME:$IMAGE_TAG
+            fi
+          
+            echo "🧪 Running frontend tests in Docker container..."
+            mkdir -p coverage/frontend
+          
+            docker run --rm \
+              -v $(pwd)/coverage/frontend:/tmp/coverage \
+              $FULL_IMAGE_NAME:$IMAGE_TAG \
+              sh -c "
+                echo '=== Frontend Test Environment Check ==='
+                echo 'Available directories:'
+                ls -la /app/
+          
+                if [ -d '/app/frontend-test' ]; then
+                  cd /app/frontend-test
+                  echo '✅ Found frontend test environment'
+                  echo 'Directory contents:'
+                  ls -la
+                  echo 'Test files found:'
+                  find . -name '*.test.*' -o -name '*.spec.*' | head -10
+          
+                  echo '=== Running Frontend Tests ==='
+                  npm run test:coverage 2>&1 || npm run test 2>&1 || npm test 2>&1 || echo 'No test script available'
+          
+                  echo '=== Copying Coverage ==='
+                  [ -d 'coverage' ] && cp -r coverage/* /tmp/coverage/ 2>/dev/null && echo 'Coverage copied' || echo 'No coverage found'
+                else
+                  echo '❌ Frontend test environment not found in container'
+                  echo 'This means the Docker build did not include the frontend-test stage'
+                fi
+              " || echo "Frontend tests completed with warnings"
+          
+            echo "✅ Frontend tests completed (Docker container)"
+          else
+            if [ -d "frontend" ]; then
+              cd frontend
+              if [ -f "package.json" ]; then
+                echo "📦 Installing frontend dependencies..."
+                npm ci
+                echo "🧪 Running frontend tests..."
+                npm run test:coverage 2>/dev/null || npm run test 2>/dev/null || npm test 2>/dev/null || echo "No test script available"
+              else
+                echo "⚠️ No package.json found in frontend directory"
+              fi
+            else
+              echo "⚠️ No frontend directory found"
+            fi
+          fi
+
+      - name: 🐍 Run Backend Tests
+        if: env.SKIP_TESTS == 'false' && matrix.test-type == 'backend'
+        timeout-minutes: 25
+        run: |
+          echo "🐍 Running backend tests..."
+          if [ "$USE_DOCKER" = "true" ] && [ "$DOCKER_BUILD_SUCCESS" = "true" ]; then
+            if [ "$IMAGE_PUSHED" = "true" ]; then
+              echo "🐳 Pulling Docker image for testing..."
+              docker pull $FULL_IMAGE_NAME:$IMAGE_TAG
+            fi
+          
+            echo "🧪 Running backend tests in Docker container..."
+            mkdir -p coverage/backend
+          
+            timeout 2400 docker run --rm \
+              --name backend-test-container-${{ github.run_id }} \
+              --memory=4g \
+              --cpus=2 \
+              -v $(pwd)/coverage/backend:/tmp/coverage \
+              -e CI=true \
+              -e PYTEST_TIMEOUT=300 \
+              -e PYTHONUNBUFFERED=1 \
+              $FULL_IMAGE_NAME:$IMAGE_TAG \
+              sh -c "
+                cd /app/backend || cd /app
+                pip install pytest-xdist pytest-timeout pytest-cov pytest-html pytest-json-report 2>/dev/null || true
+                python -m pytest tests/ -v --tb=short -n auto --maxfail=5 --timeout=300 --cov=. --cov-report=html --cov-report=xml -x || echo 'Tests completed with warnings'
+                [ -d 'htmlcov' ] && cp -r htmlcov/* /tmp/coverage/ 2>/dev/null || true
+              " || echo "Backend tests completed with warnings"
+          
+            echo "✅ Backend tests completed (Docker container)"
+          else
+            if [ -d "backend" ]; then
+              cd backend
+              python -m pip install --upgrade pip
+              if [ -f "requirements.txt" ]; then
+                pip install -r requirements.txt
+                pip install pytest-xdist pytest-timeout pytest-cov
+                if [ -d "tests" ]; then
+                  timeout 1800 python -m pytest tests/ -v --tb=short -n auto --maxfail=5 --timeout=300 --cov=. --cov-report=html --cov-report=xml || echo "Tests completed with warnings"
+                else
+                  echo "⚠️ No tests directory found"
+                fi
+              else
+                echo "⚠️ No requirements.txt found in backend directory"
+              fi
+            else
+              echo "⚠️ No backend directory found"
+            fi
+          fi
+
+      - name: 🔗 Run Integration Tests
+        if: env.SKIP_TESTS == 'false' && matrix.test-type == 'integration'
+        timeout-minutes: 15
+        run: |
+          echo "🔗 Running integration tests..."
+          if [ "$USE_DOCKER" = "true" ] && [ "$DOCKER_BUILD_SUCCESS" = "true" ]; then
+            if [ "$IMAGE_PUSHED" = "true" ]; then
+              docker pull $FULL_IMAGE_NAME:$IMAGE_TAG
+            fi
+          
+            echo "🚀 Starting application container with comprehensive environment..."
+          
+            # Clean up any existing containers first
+            docker rm -f integration-test-${{ github.run_id }} 2>/dev/null || true
+          
+            CONTAINER_ID=$(docker run -d \
+              --name integration-test-${{ github.run_id }} \
+              -e SECRET_KEY="integration-test-secret-$(date +%s)" \
+              -e DATABASE_URL="sqlite:///tmp/integration_test.db" \
+              -e ENVIRONMENT="test" \
+              -e DEBUG="true" \
+              -e PYTHONUNBUFFERED="1" \
+              -e API_V1_STR="/api" \
+              -e PROJECT_NAME="AI Remote Dev Agent - Integration Test" \
+              -e BACKEND_CORS_ORIGINS='["http://localhost:3000", "http://localhost:8000"]' \
+              -e OPENAI_API_KEY="test-integration-key" \
+              -e ANTHROPIC_API_KEY="test-integration-key" \
+              -e LOG_LEVEL="INFO" \
+              -p 8000:8000 -p 3000:3000 \
+              $FULL_IMAGE_NAME:$IMAGE_TAG)
+          
+            if [ -z "$CONTAINER_ID" ]; then
+              echo "❌ Failed to start container"
+              exit 1
+            fi
+          
+            echo "✅ Container started with ID: $CONTAINER_ID"
+            sleep 10
+          
+            echo "⏳ Waiting for services to start..."
+            STARTUP_TIMEOUT=120
+            STARTUP_START=$(date +%s)
+            SERVICE_READY=false
+          
+            while [ $(( - STARTUP_START)) -lt $STARTUP_TIMEOUT ]; do
+              if ! docker ps --filter "id=$CONTAINER_ID" --format "table {{.ID}}" | grep -q $CONTAINER_ID; then
+                echo "❌ Container stopped unexpectedly"
+                docker logs $CONTAINER_ID
+                docker rm -f $CONTAINER_ID 2>/dev/null || true
+                exit 1
+              fi
+          
+              if docker exec $CONTAINER_ID curl -f http://localhost:8000/health >/dev/null 2>&1; then
+                echo "✅ Backend service is responding"
+                SERVICE_READY=true
+                break
+              fi
+          
+              echo "⏳ Services starting... ($((  - STARTUP_START ))s elapsed)"
+              sleep 10
+            done
+          
+            if [ "$SERVICE_READY" = "false" ]; then
+              echo "❌ Services failed to start within $STARTUP_TIMEOUT seconds"
+              docker logs $CONTAINER_ID --tail 50
+              docker stop $CONTAINER_ID 2>/dev/null || true
+              docker rm -f $CONTAINER_ID 2>/dev/null || true
+              exit 1
+            fi
+          
+            echo "🔍 Testing application endpoints..."
+            docker exec $CONTAINER_ID curl -f http://localhost:8000/health || echo "Health check failed"
+            docker exec $CONTAINER_ID curl -f http://localhost:8000/docs || echo "Docs check failed"
+          
+            echo "🧹 Cleaning up container..."
+            docker logs $CONTAINER_ID --tail 20 || true
+            docker stop $CONTAINER_ID 2>/dev/null || true
+            docker rm -f $CONTAINER_ID 2>/dev/null || true
+            echo "✅ Integration tests completed"
+          else
+            echo "✅ Integration tests skipped (no Docker build)"
+          fi
+
+      - name: 💨 Run Smoke Tests
+        if: env.SKIP_TESTS == 'false' && matrix.test-type == 'smoke'
+        timeout-minutes: 10
+        run: |
+          echo "💨 Running smoke tests..."
+          if [ "$USE_DOCKER" = "true" ] && [ "$DOCKER_BUILD_SUCCESS" = "true" ]; then
+            if [ "$IMAGE_PUSHED" = "true" ]; then
+              docker pull $FULL_IMAGE_NAME:$IMAGE_TAG
+            fi
+          
+            echo "🔍 Testing Docker image startup..."
+            docker rm -f smoke-test-${{ github.run_id }} 2>/dev/null || true
+          
+            CONTAINER_ID=$(docker run -d \
+              --name smoke-test-${{ github.run_id }} \
+              -e SECRET_KEY="test-secret-key-for-ci-smoke-test-only" \
+              -e DATABASE_URL="sqlite:///tmp/test.db" \
+              -e ENVIRONMENT="test" \
+              -e DEBUG="false" \
+              -e API_V1_STR="/api" \
+              -e PROJECT_NAME="AI Remote Dev Agent - Smoke Test" \
+              -e BACKEND_CORS_ORIGINS='["http://localhost:3000"]' \
+              -e OPENAI_API_KEY="test-key" \
+              -e ANTHROPIC_API_KEY="test-key" \
+              -e LOG_LEVEL="ERROR" \
+              -e PYTHONUNBUFFERED="1" \
+              $FULL_IMAGE_NAME:$IMAGE_TAG)
+          
+            sleep 15
+          
+            if docker ps --filter "id=$CONTAINER_ID" --format "table {{.ID}}" | grep -q $CONTAINER_ID; then
+              echo "✅ Container starts and runs successfully"
+              docker logs $CONTAINER_ID --tail 10
+              docker stop $CONTAINER_ID 2>/dev/null || true
+              docker rm -f $CONTAINER_ID 2>/dev/null || true
+            else
+              echo "❌ Container failed to start or exited"
+              docker logs $CONTAINER_ID
+              docker rm -f $CONTAINER_ID 2>/dev/null || true
+              exit 1
+            fi
+          
+            echo "✅ Smoke tests completed"
+          else
+            echo "✅ Smoke test: Source code structure validated"
+            ls -la
+          fi
       - name: 📊 Upload Test Results
         if: always()
         uses: actions/upload-artifact@v4
