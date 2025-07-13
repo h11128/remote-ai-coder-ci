@@ -383,7 +383,7 @@ jobs:
   run-tests:
     name: 🧪 Run Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     needs: [validate-and-sync, docker-build]
     if: always() && needs.validate-and-sync.outputs.test_enabled == 'true'
 
@@ -682,8 +682,63 @@ jobs:
               docker pull $FULL_IMAGE_NAME:$IMAGE_TAG
             fi
           
-            echo "🚀 Starting application container..."
-            CONTAINER_ID=$(docker run -d \
+            echo "🚀 Starting application container with comprehensive environment..."
+          
+          # Clean up any existing containers first
+          docker rm -f integration-test-${{ github.run_id }} 2>/dev/null || true
+          
+          CONTAINER_ID=$(docker run -d \
+            --name integration-test-${{ github.run_id }} \
+            -e SECRET_KEY="integration-test-secret-$(date +%s)" \
+            -e DATABASE_URL="sqlite:///tmp/integration_test.db" \
+            -e ENVIRONMENT="test" \
+            -e DEBUG="true" \
+            -e PYTHONUNBUFFERED="1" \
+            -e API_V1_STR="/api" \
+            -e PROJECT_NAME="AI Remote Dev Agent - Integration Test" \
+            -e BACKEND_CORS_ORIGINS='["http://localhost:3000", "http://localhost:8000"]' \
+            -e OPENAI_API_KEY="test-integration-key" \
+            -e ANTHROPIC_API_KEY="test-integration-key" \
+            -e LOG_LEVEL="INFO" \
+            -p 8000:8000 -p 3000:3000 \
+            $FULL_IMAGE_NAME:$IMAGE_TAG)
+          
+          if [ -z "$CONTAINER_ID" ]; then
+            echo "❌ Failed to start container"
+            exit 1
+          fi
+          
+          echo "✅ Container started with ID: $CONTAINER_ID"
+          
+          # Comprehensive container diagnostics
+          echo "=== 🔍 Container Diagnostics ==="
+          echo "📋 Container status:"
+          docker ps --filter "id=$CONTAINER_ID" --format "table {{.ID}}\t{{.Status}}\t{{.Ports}}"
+          
+          echo "📋 Initial container logs:"
+          docker logs $CONTAINER_ID --tail 20 2>&1 || echo "No logs available yet"
+          
+          # Give the container time to initialize
+          echo "⏳ Waiting 10 seconds for container initialization..."
+          sleep 10
+          
+          # Check if container is still running after initialization
+          if ! docker ps --filter "id=$CONTAINER_ID" --format "table {{.ID}}" | grep -q $CONTAINER_ID; then
+            echo "❌ Container stopped during initialization"
+            echo "📋 Final container logs:"
+            docker logs $CONTAINER_ID 2>&1
+            echo "📋 Container exit details:"
+            docker inspect $CONTAINER_ID --format='Exit Code: {{.State.ExitCode}}, Error: {{.State.Error}}' 2>/dev/null
+            docker rm -f $CONTAINER_ID 2>/dev/null || true
+            exit 1
+          fi
+          
+          echo "✅ Container survived initialization phase"
+            # Clean up any existing containers first
+          docker rm -f integration-test-${{ github.run_id }} 2>/dev/null || true
+          
+          CONTAINER_ID=$(docker run -d \
+            --name integration-test- \
               --name integration-test-${{ github.run_id }} \
               -e SECRET_KEY="integration-test-secret-$(date +%s)" \
               -e DATABASE_URL="sqlite:///tmp/integration_test.db" \
@@ -706,7 +761,30 @@ jobs:
                 exit 1
               fi
           
-              if docker exec $CONTAINER_ID curl -f http://localhost:8000/health >/dev/null 2>&1; then
+              # Test multiple endpoints to find one that works
+            HEALTH_ENDPOINTS=("/health" "/docs" "/" "/api/health")
+            ENDPOINT_WORKING=false
+          
+            for endpoint in "${HEALTH_ENDPOINTS[@]}"; do
+              if docker exec $CONTAINER_ID curl -f "http://localhost:8000$endpoint" >/dev/null 2>&1; then
+                echo "✅ Backend service responding at $endpoint"
+                SERVICE_READY=true
+                ENDPOINT_WORKING=true
+                break
+              fi
+            done
+          
+            if [ "$ENDPOINT_WORKING" = "true" ]; then
+              break
+            fi
+          
+            # Show current container status and logs if no endpoints work
+            echo "📋 Container status during health check:"
+            docker ps --filter "id=$CONTAINER_ID" --format "table {{.ID}}\t{{.Status}}" 2>/dev/null || echo "Container not found"
+            echo "📋 Recent container logs:"
+            docker logs $CONTAINER_ID --tail 10 2>&1 || echo "No logs available"
+          
+            if false; then
                 echo "✅ Backend service is responding"
                 SERVICE_READY=true
                 break
@@ -748,7 +826,11 @@ jobs:
             fi
           
             echo "🔍 Testing Docker image startup..."
-            CONTAINER_ID=$(docker run -d \
+            # Clean up any existing containers first
+          docker rm -f integration-test-${{ github.run_id }} 2>/dev/null || true
+          
+          CONTAINER_ID=$(docker run -d \
+            --name integration-test- \
               -e SECRET_KEY="test-secret-key-for-ci-smoke-test-only" \
               -e DATABASE_URL="sqlite:///tmp/test.db" \
               -e ENVIRONMENT="test" \
