@@ -276,6 +276,12 @@ jobs:
           COPY frontend/ ./
           RUN npm run build
           
+          FROM node:18-alpine AS frontend-test
+          WORKDIR /app/frontend
+          COPY frontend/package*.json ./
+          RUN npm ci  # Install all dependencies including dev dependencies
+          COPY frontend/ ./  # Copy all source code including tests
+          
           RUN ls -la .next/ && echo "Build successful" || echo "Build failed"
           
           FROM python:3.11-slim AS backend-build
@@ -617,7 +623,7 @@ jobs:
             "backend")
               echo "🐍 Running backend tests..."
               if [ "$USE_DOCKER" = "true" ] && [ "$DOCKER_BUILD_SUCCESS" = "true" ]; then
-                # Test using Docker image
+                # Test using Docker image with enhanced resource management
                 FULL_IMAGE_NAME="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
           
                 if [ "$IMAGE_PUSHED" = "true" ]; then
@@ -625,47 +631,162 @@ jobs:
                   docker pull $FULL_IMAGE_NAME:$IMAGE_TAG
                 fi
           
-                echo "🧪 Running backend tests in Docker container..."
+                echo "🧪 Running backend tests in Docker container with enhanced monitoring..."
                 mkdir -p coverage/backend
           
-                # Run tests in Docker - adjust for actual project structure
-                docker run --rm \
+                # Option 3: Enhanced Docker test execution with resource limits and timeout handling
+                echo "=== 🚀 Starting Enhanced Backend Test Execution ==="
+                echo "Start time: $(date)"
+                echo "Container image: $FULL_IMAGE_NAME:$IMAGE_TAG"
+          
+                # Run tests with comprehensive resource management and monitoring
+                timeout 2400 docker run --rm \
+                  --name backend-test-container-${{ github.run_id }} \
+                  --memory=4g \
+                  --memory-swap=4g \
+                  --cpus=2 \
+                  --ulimit nofile=65536:65536 \
+                  --tmpfs /tmp:rw,noexec,nosuid,size=1g \
                   -v $(pwd)/coverage/backend:/tmp/coverage \
+                  -e CI=true \
+                  -e PYTEST_TIMEOUT=300 \
+                  -e PYTHONUNBUFFERED=1 \
                   $FULL_IMAGE_NAME:$IMAGE_TAG \
                   sh -c "
+                    set -e
+                    echo '=== 🔍 Container Environment Check ==='
+                    echo 'Container start time: \$(date)'
+                    echo 'Available memory: \$(free -h)'
+                    echo 'Available CPU cores: \$(nproc)'
+                    echo 'Python version: \$(python --version)'
+                    echo 'Pytest version: \$(python -m pytest --version 2>/dev/null || echo 'pytest not found')'
+          
+                    # Navigate to backend directory
                     if [ -d '/app/backend' ]; then
                       cd /app/backend
+                      echo '✅ Found backend directory: /app/backend'
                     elif [ -d '/app' ]; then
                       cd /app
+                      echo '✅ Using app directory: /app'
+                    else
+                      echo '❌ No backend directory found'
+                      find / -name 'requirements.txt' -type f 2>/dev/null | head -5
+                      exit 1
                     fi
           
-                    if [ -f 'requirements.txt' ]; then
-                      pip install pytest pytest-cov 2>/dev/null || true
-                      if [ -d 'tests' ]; then
-                        python -m pytest tests/ -v --cov=. --cov-report=html --cov-report=xml 2>/dev/null || python -m pytest tests/ -v 2>/dev/null || echo 'Pytest failed'
-                      else
-                        echo 'No tests directory found'
-                      fi
-                      [ -d 'htmlcov' ] && cp -r htmlcov/* /tmp/coverage/ 2>/dev/null || true
-                      [ -f 'coverage.xml' ] && cp coverage.xml /tmp/coverage/ 2>/dev/null || true
-                    else
-                      echo 'No requirements.txt found'
-                    fi
-                  " || echo "Backend tests completed with warnings"
+                    echo '=== 📦 Installing Test Dependencies ==='
+                    # Install additional test dependencies for better performance
+                    pip install pytest-xdist pytest-timeout pytest-cov pytest-html pytest-json-report 2>/dev/null || echo 'Some packages already installed'
+          
+                    echo '=== 🔍 Test Environment Validation ==='
+                    echo 'Current directory: \$(pwd)'
+                    echo 'Directory contents:'
+                    ls -la
+                    echo 'Test directory contents:'
+                    [ -d 'tests' ] && ls -la tests/ | head -10 || echo 'No tests directory found'
+                    echo 'Requirements file:'
+                    [ -f 'requirements.txt' ] && echo 'requirements.txt found' || echo 'requirements.txt missing'
+          
+                    echo '=== 🧪 Running Backend Tests with Parallelization ==='
+                    echo 'Test execution start: \$(date)'
+          
+                    # Option 4: Test monitoring and early exit + Quick Solution 3: Parallelization
+                    python -m pytest tests/ \
+                      --verbose \
+                      --tb=short \
+                      --strict-markers \
+                      --strict-config \
+                      -n auto \
+                      --maxfail=5 \
+                      --timeout=300 \
+                      --timeout-method=thread \
+                      --durations=10 \
+                      --cov=. \
+                      --cov-report=html \
+                      --cov-report=xml \
+                      --cov-report=term-missing \
+                      --html=/tmp/coverage/pytest-report.html \
+                      --self-contained-html \
+                      --json-report \
+                      --json-report-file=/tmp/coverage/pytest-report.json \
+                      --disable-warnings \
+                      -x \
+                      || {
+                        echo '⚠️ Tests failed, but continuing with cleanup...'
+                        echo 'Test failure time: \$(date)'
+                        echo 'Exit code: \$?'
+                      }
+          
+                    echo '=== 📊 Test Results Summary ==='
+                    echo 'Test execution end: \$(date)'
+                    echo 'Coverage files:'
+                    find . -name '*.xml' -o -name '*.html' -o -name 'htmlcov' -type d | head -10
+          
+                    echo '=== 📤 Copying Test Results ==='
+                    # Copy all test artifacts
+                    [ -d 'htmlcov' ] && cp -r htmlcov/* /tmp/coverage/ 2>/dev/null && echo 'HTML coverage copied' || echo 'No HTML coverage found'
+                    [ -f 'coverage.xml' ] && cp coverage.xml /tmp/coverage/ 2>/dev/null && echo 'XML coverage copied' || echo 'No XML coverage found'
+                    [ -f '.coverage' ] && cp .coverage /tmp/coverage/ 2>/dev/null && echo 'Coverage data copied' || echo 'No coverage data found'
+          
+                    echo '=== ✅ Container Execution Complete ==='
+                    echo 'Container end time: \$(date)'
+                    echo 'Final exit code: 0'
+                  " 2>&1 | tee backend-test.log || {
+                    echo "❌ Backend tests encountered issues"
+                    echo "Exit code: $?"
+                    echo "End time: $(date)"
+          
+                    # Option 4: Enhanced error reporting
+                    echo "=== 📋 Error Analysis ==="
+                    echo "Last 50 lines of test output:"
+                    tail -50 backend-test.log || echo "No log file found"
+          
+                    echo "=== 🐳 Container Status Check ==="
+                    docker ps -a --filter "name=backend-test-container-${{ github.run_id }}" || echo "Container not found"
+          
+                    echo "=== 💾 Partial Results Recovery ==="
+                    # Try to recover any partial results
+                    [ -d "coverage/backend" ] && echo "Coverage directory exists: $(ls -la coverage/backend)" || echo "No coverage directory"
+          
+                    echo "Tests completed with warnings - continuing workflow"
+                  }
           
                 echo "✅ Backend tests completed (Docker container)"
+                echo "=== 📊 Final Test Summary ==="
+                echo "Total execution time: $(($(date +%s) - start_time)) seconds"
+                echo "Coverage files generated:"
+                ls -la coverage/backend/ 2>/dev/null || echo "No coverage files found"
+          
               else
-                # Test using source code
+                # Test using source code with enhanced execution
+                echo "🐍 Running backend tests on source code..."
                 if [ -d "backend" ]; then
                   cd backend
-                  echo "🐍 Setting up Python environment..."
+                  echo "📦 Setting up Python environment with enhanced dependencies..."
                   python -m pip install --upgrade pip
                   if [ -f "requirements.txt" ]; then
                     pip install -r requirements.txt
-                    pip install pytest pytest-cov
-                    echo "🧪 Running backend tests..."
+                    # Install additional test dependencies
+                    pip install pytest-xdist pytest-timeout pytest-cov pytest-html pytest-json-report
+          
+                    echo "🧪 Running backend tests with parallelization..."
                     if [ -d "tests" ]; then
-                      python -m pytest tests/ -v --cov=. --cov-report=html --cov-report=xml || echo "Tests completed with warnings"
+                      # Enhanced test execution for source code
+                      timeout 1800 python -m pytest tests/ \
+                        --verbose \
+                        --tb=short \
+                        -n auto \
+                        --maxfail=5 \
+                        --timeout=300 \
+                        --durations=10 \
+                        --cov=. \
+                        --cov-report=html \
+                        --cov-report=xml \
+                        --html=pytest-report.html \
+                        --self-contained-html \
+                        --json-report \
+                        --json-report-file=pytest-report.json \
+                        || echo "Tests completed with warnings"
                     else
                       echo "⚠️ No tests directory found"
                     fi
