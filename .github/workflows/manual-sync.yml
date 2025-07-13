@@ -337,7 +337,23 @@ jobs:
           
             # Get image digest
             IMAGE_DIGEST=$(docker buildx imagetools inspect $FULL_IMAGE_NAME:$IMAGE_TAG --format '{{.Manifest.Digest}}')
-            echo "image_pushed=true" >> $GITHUB_OUTPUT
+          
+            if IMAGE_DIGEST=$(docker buildx imagetools inspect $FULL_IMAGE_NAME:$IMAGE_TAG --format '{{.Manifest.Digest}}' 2>/dev/null); then
+              echo "✅ Image digest retrieved: $IMAGE_DIGEST"
+            else
+              echo "⚠️ Could not retrieve image digest, using alternative method..."
+              IMAGE_DIGEST=$(grep -o 'sha256:[a-f0-9]\{64\}' build.log | head -1 || echo "sha256:unknown")
+            fi
+            # Clean the digest value before setting as output
+            CLEAN_DIGEST=$(echo "$IMAGE_DIGEST" | tr -d '\n\r' | sed 's/[^a-zA-Z0-9:]//g')
+            echo "image_digest=$CLEAN_DIGEST" >> $GITHUB_OUTPUT
+          
+            if [[ "$IMAGE_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+              echo "✅ Valid digest format: $IMAGE_DIGEST"
+            else
+              echo "⚠️ Invalid digest format, using placeholder"
+              IMAGE_DIGEST="sha256:$(date +%s | sha256sum | cut -d' ' -f1)"
+            fi
           else
             # Build only (local)
             docker buildx build \
@@ -370,17 +386,128 @@ jobs:
         test-type: [frontend, backend, integration, smoke]
 
     steps:
-      - name: 📥 Download Source Code
-        if: needs.validate-and-sync.outputs.build_enabled != 'true'
+      - name: 📥 Download Source Code with Verification
         uses: actions/download-artifact@v4
         with:
           name: manual-sync-source
 
-      - name: 📦 Extract Source Code
-        if: needs.validate-and-sync.outputs.build_enabled != 'true'
+      - name: 🔍 Verify Download Success
         run: |
-          tar -xzf source-code.tar.gz
+          echo "=== 📋 Download Verification ==="
+          echo "Current working directory: $(pwd)"
+          echo "User: $(whoami)"
+          echo "Available disk space: $(df -h . | tail -1)"
+          
+          echo "=== 📦 Checking Downloaded Files ==="
+          echo "All files in current directory:"
           ls -la
+          
+          if [ -f "source-code.tar.gz" ]; then
+            echo "✅ source-code.tar.gz successfully downloaded"
+            echo "📊 File size: $(du -h source-code.tar.gz | cut -f1)"
+            echo "📊 File details: $(ls -l source-code.tar.gz)"
+            echo "📊 File type: $(file source-code.tar.gz)"
+          
+            # Test if the file is a valid gzip archive
+            if gzip -t source-code.tar.gz 2>/dev/null; then
+              echo "✅ Archive integrity verified"
+            else
+              echo "❌ Archive appears to be corrupted"
+              exit 1
+            fi
+          else
+            echo "❌ CRITICAL: source-code.tar.gz not found after download"
+            echo "This indicates an artifact download failure"
+            exit 1
+          fi
+
+      - name: 📦 Extract Source Code with Detailed Logging
+        run: |
+          echo "=== 📂 Starting Extraction Process ==="
+          echo "Archive to extract: source-code.tar.gz"
+          
+          # Show what's inside the archive before extracting
+          echo "=== 📋 Archive Contents Preview ==="
+          if tar -tzf source-code.tar.gz | head -20; then
+            echo "✅ Archive contents listed successfully"
+            echo "Total files in archive: $(tar -tzf source-code.tar.gz | wc -l)"
+          else
+            echo "❌ Failed to list archive contents"
+            exit 1
+          fi
+          
+          echo "=== 📂 Extracting Archive ==="
+          if tar -xzf source-code.tar.gz --verbose; then
+            echo "✅ Extraction completed successfully"
+          else
+            echo "❌ CRITICAL: Extraction failed"
+            exit 1
+          fi
+          
+          echo "=== 📋 Post-Extraction Verification ==="
+          echo "Root directory contents after extraction:"
+          ls -la
+          
+          echo "=== 🔍 Directory Structure Analysis ==="
+          echo "Directory tree (first 3 levels):"
+          find . -type d -maxdepth 3 | sort
+          
+          echo "=== 🎯 Critical Directory Checks ==="
+          # Frontend directory check
+          if [ -d "frontend" ]; then
+            echo "✅ frontend/ directory found"
+            echo "📂 Frontend directory size: $(du -sh frontend/ | cut -f1)"
+            echo "📂 Frontend file count: $(find frontend/ -type f | wc -l)"
+            echo "📂 Frontend subdirectories:"
+            find frontend/ -type d -maxdepth 2 | sort
+          
+            if [ -f "frontend/package.json" ]; then
+              echo "✅ frontend/package.json exists"
+              echo "📋 Package name: $(grep '"name"' frontend/package.json | head -1)"
+            else
+              echo "⚠️ frontend/package.json missing"
+            fi
+          
+            if [ -d "frontend/src" ]; then
+              echo "✅ frontend/src/ directory exists"
+            else
+              echo "⚠️ frontend/src/ directory missing"
+            fi
+          else
+            echo "❌ CRITICAL: frontend/ directory NOT found"
+          fi
+          
+          # Backend directory check
+          if [ -d "backend" ]; then
+            echo "✅ backend/ directory found"
+            echo "📂 Backend directory size: $(du -sh backend/ | cut -f1)"
+            echo "📂 Backend file count: $(find backend/ -type f | wc -l)"
+            echo "📂 Backend subdirectories:"
+            find backend/ -type d -maxdepth 2 | sort
+          
+            if [ -f "backend/requirements.txt" ]; then
+              echo "✅ backend/requirements.txt exists"
+              echo "📋 Requirements count: $(wc -l < backend/requirements.txt)"
+            else
+              echo "⚠️ backend/requirements.txt missing"
+            fi
+          
+            if [ -f "backend/main.py" ]; then
+              echo "✅ backend/main.py exists"
+            else
+              echo "⚠️ backend/main.py missing"
+            fi
+          else
+            echo "❌ CRITICAL: backend/ directory NOT found"
+          fi
+          
+          echo "=== 📊 Final Summary ==="
+          echo "Extraction Status: ✅ SUCCESS"
+          echo "Frontend Available: $([ -d 'frontend' ] && echo '✅ YES' || echo '❌ NO')"
+          echo "Backend Available: $([ -d 'backend' ] && echo '✅ YES' || echo '❌ NO')"
+          echo "Total Disk Usage: $(du -sh . | cut -f1)"
+          echo "Ready for testing: $([ -d 'frontend' ] && [ -d 'backend' ] && echo '✅ YES' || echo '❌ NO')"
+
 
       - name: 🔐 Login to Container Registry
         if: always() && needs.validate-and-sync.outputs.build_enabled == 'true' && (needs.docker-build.result || 'skipped') == 'success' && (needs.docker-build.outputs.image_pushed || 'false') == 'true'
