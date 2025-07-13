@@ -276,6 +276,8 @@ jobs:
           COPY frontend/ ./
           RUN npm run build
           
+          RUN ls -la .next/ && echo "Build successful" || echo "Build failed"
+          
           FROM python:3.11-slim AS backend-build
           WORKDIR /app
           RUN apt-get update && apt-get install -y build-essential curl git && rm -rf /var/lib/apt/lists/*
@@ -292,7 +294,7 @@ jobs:
           COPY --from=backend-build /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
           
           # Copy frontend build
-          COPY --from=frontend-build /app/frontend/.next ./frontend/.next 2>/dev/null || true
+          COPY --from=frontend-build /app/frontend/.next ./frontend/.next
           COPY --from=frontend-build /app/frontend/package.json ./frontend/package.json
           
           EXPOSE 8000 3000
