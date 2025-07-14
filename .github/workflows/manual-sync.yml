@@ -598,9 +598,9 @@ jobs:
                 echo 'Available directories:'
                 ls -la /app/
           
-                if [ -d '/app/frontend-test' ]; then
-                  cd /app/frontend-test
-                  echo '✅ Found frontend test environment'
+                if [ -d '/app/frontend' ]; then
+                  cd /app/frontend
+                  echo '✅ Found frontend directory, installing test dependencies'\n                mkdir -p /tmp/frontend-coverage\n                echo '📦 Installing all dependencies (including dev dependencies)...'\n                npm ci
                   echo 'Directory contents:'
                   ls -la
                   echo 'Test files found:'
@@ -612,8 +612,8 @@ jobs:
                   echo '=== Copying Coverage ==='
                   [ -d 'coverage' ] && cp -r coverage/* /tmp/coverage/ 2>/dev/null && echo 'Coverage copied' || echo 'No coverage found'
                 else
-                  echo '❌ Frontend test environment not found in container'
-                  echo 'This means the Docker build did not include the frontend-test stage'
+                  echo '❌ Using frontend directory for testing in container'
+                  echo 'This means the Installing dependencies and running tests in frontend directory'
                 fi
               " || echo "Frontend tests completed with warnings"
           
