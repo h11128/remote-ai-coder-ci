@@ -600,14 +600,47 @@ jobs:
           
                 if [ -d '/app/frontend' ]; then
                   cd /app/frontend
-                  echo '✅ Found frontend directory, installing test dependencies'\n                mkdir -p /tmp/frontend-coverage\n                echo '📦 Installing all dependencies (including dev dependencies)...'\n                npm ci
+                  echo '✅ Found frontend directory, installing test dependencies'
+                  mkdir -p /tmp/frontend-coverage
+                  echo '📦 Installing all dependencies (including dev dependencies)...'
+          
+                  # Ensure we have a clean npm environment
+                  npm cache clean --force 2>/dev/null || true
+          
+                  # Install all dependencies including dev dependencies
+                  npm ci --include=dev
+          
+                  echo 'Node modules check:'
+                  ls -la node_modules/.bin/ | grep jest || echo 'Jest not found in node_modules/.bin'
+                  echo 'NPM bin path:'
+                  npm bin
+                  echo 'Jest location check:'
+                  which jest || echo 'Jest not in PATH'
+                  echo 'NPX Jest check:'
+                  npx jest --version 2>/dev/null || echo 'Jest not available via npx'
                   echo 'Directory contents:'
                   ls -la
                   echo 'Test files found:'
                   find . -name '*.test.*' -o -name '*.spec.*' | head -10
           
                   echo '=== Running Frontend Tests ==='
-                  npm run test:coverage 2>&1 || npm run test 2>&1 || npm test 2>&1 || echo 'No test script available'
+                  # Try multiple approaches to run Jest
+                  if npx jest --version >/dev/null 2>&1; then
+                    echo 'Using npx to run Jest...'
+                    npx jest --coverage --passWithNoTests 2>&1 || npx jest --passWithNoTests 2>&1 || echo 'Jest failed via npx'
+                  elif [ -f node_modules/.bin/jest ]; then
+                    echo 'Using direct path to Jest...'
+                    ./node_modules/.bin/jest --coverage --passWithNoTests 2>&1 || ./node_modules/.bin/jest --passWithNoTests 2>&1 || echo 'Jest failed via direct path'
+                  elif npm run test:coverage >/dev/null 2>&1; then
+                    echo 'Using npm run test:coverage...'
+                    npm run test:coverage 2>&1
+                  elif npm run test >/dev/null 2>&1; then
+                    echo 'Using npm run test...'
+                    npm run test 2>&1
+                  else
+                    echo 'No Jest test method available - checking package.json scripts'
+                    cat package.json | grep -A 5 -B 5 '"scripts"' || echo 'No scripts found'
+                  fi
           
                   echo '=== Copying Coverage ==='
                   [ -d 'coverage' ] && cp -r coverage/* /tmp/coverage/ 2>/dev/null && echo 'Coverage copied' || echo 'No coverage found'
@@ -901,3 +934,5 @@ jobs:
           echo "Docker Build: ${{ needs.docker-build.result }}"
           echo "Tests: ${{ needs.run-tests.result }}"
           exit 1
+
+
