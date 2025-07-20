@@ -593,13 +593,13 @@ jobs:
           docker pull $TEST_IMAGE
           
           echo "=== 🐳 Frontend Test Environment Check ==="
-          docker run --rm -v "$(pwd):/app" -w /app/frontend $TEST_IMAGE sh -c "
+          docker run --rm -v "$(pwd):/app" -w /app $TEST_IMAGE sh -c "
             echo 'Available directories:'
-            ls -la /app
+            ls -la .
           
             if [ -d 'frontend' ]; then
               echo '✅ Found frontend directory, installing test dependencies'
-              cd /app/frontend
+              cd frontend
           
               # Create a dummy package-lock.json if it doesn't exist to satisfy 'npm ci'
               if [ ! -f package-lock.json ]; then
