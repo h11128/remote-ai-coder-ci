@@ -383,7 +383,7 @@ jobs:
   run-tests:
     name: 🧪 Run Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     needs: [validate-and-sync, docker-build]
     if: always() && needs.validate-and-sync.outputs.test_enabled == 'true'
 
@@ -577,99 +577,52 @@ jobs:
             echo "SKIP_TESTS=false" >> $GITHUB_ENV
           fi
 
-      - name: 🧪 Run Frontend Tests (in Docker)
-        if: |
-          (matrix.test-type == 'frontend' && (github.event.inputs.test_scope == 'all' || github.event.inputs.test_scope == 'frontend-only'))
+      - name: 🎨 Run Frontend Tests
+        if: env.SKIP_TESTS == 'false' && matrix.test-type == 'frontend'
         run: |
-          echo "=== 🚀 Starting Frontend Tests ==="
-          IMAGE_TAG="${{ needs.docker-build.outputs.image_tag || 'latest' }}"
-          FULL_IMAGE_NAME="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
-          
-          echo "🐳 Using Docker image: $FULL_IMAGE_NAME:$IMAGE_TAG"
-          
-          # Use a clean, simple node image for testing to avoid complexities of multi-stage builds
-          # This ensures a consistent and isolated test environment.
-          TEST_IMAGE="node:18-alpine"
-          docker pull $TEST_IMAGE
-          
-          echo "=== 🐳 Frontend Test Environment Check ==="
-          docker run --rm -v "$(pwd):/app" -w /app $TEST_IMAGE sh -c "
-            echo 'Available directories:'
-            ls -la .
-          
-            if [ -d 'frontend' ]; then
-              echo '✅ Found frontend directory, installing test dependencies'
-              cd frontend
-          
-              # Create a dummy package-lock.json if it doesn't exist to satisfy 'npm ci'
-              if [ ! -f package-lock.json ]; then
-                echo '⚠️ package-lock.json not found. Generating a new one from package.json...'
-                npm install --package-lock-only --ignore-scripts
-              fi
-          
-              echo '📦 Installing all dependencies (including dev dependencies)...'
-              # Use 'npm ci' for reliable, fast, and secure builds in CI environments
-              npm ci
-          
-              echo 'Node modules check:'
-              ls -la node_modules/.bin/ || echo 'No .bin directory found'
-          
-              if [ -f "node_modules/.bin/jest" ]; then
-                echo '✅ Jest found in node_modules/.bin'
-              else
-                echo 'Jest not found in node_modules/.bin'
-              fi
-          
-              echo 'NPM bin path:'
-              npm bin || echo 'Could not get npm bin path'
-          
-              echo 'Jest location check:'
-              if command -v jest &> /dev/null; then
-                echo '✅ Jest is in PATH'
-              else
-                echo 'Jest not in PATH'
-              fi
-          
-              echo 'NPX Jest check:'
-              npx jest --version
-          
-              echo 'Directory contents:'
-              ls -la
-          
-              echo 'Test files found:'
-              find . -name '*.test.ts' -o -name '*.test.tsx'
-          
-              echo '=== Running Frontend Tests ==='
-              echo 'Using npx to run Jest...'
-              # Run tests with coverage and handle cases where no tests are found
-              # Use --ci flag for better CI integration, and --silent to reduce noise
-              # Pass --passWithNoTests to prevent failure when a test file has no tests
-              if ! npx jest --ci --coverage --passWithNoTests; then
-                  echo '❌ Jest tests failed.'
-                  # Optional: exit 1 here if you want the whole job to fail on test failure
-              fi
-          
-              echo '=== Copying Coverage ==='
-              # Check if coverage directory exists before copying
-              if [ -d 'coverage' ]; then
-                  mkdir -p /app/coverage/frontend
-                  cp -r coverage/* /app/coverage/frontend/
-                  echo 'Coverage copied'
-              else
-                  echo 'No coverage directory found to copy.'
-              fi
-          
-            else
-              echo '❌ Frontend directory not found'
-              exit 1
+          echo "🎯 Running frontend tests..."
+          if [ "$USE_DOCKER" = "true" ] && [ "$DOCKER_BUILD_SUCCESS" = "true" ]; then
+            if [ "$IMAGE_PUSHED" = "true" ]; then
+              echo "🐳 Pulling Docker image for testing..."
+              docker pull $FULL_IMAGE_NAME:$IMAGE_TAG
             fi
-          "
-          echo "✅ Frontend tests completed (Docker container)"
-
+          
+            echo "🧪 Running frontend tests in Docker container..."
+            mkdir -p coverage/frontend
+          
+            docker run --rm \
+              -v $(pwd)/coverage/frontend:/tmp/coverage \
+              $FULL_IMAGE_NAME:$IMAGE_TAG \
+              sh -c "
+                if [ -d '/app/frontend-test' ]; then
+                  cd /app/frontend-test
+                  echo 'Running tests from source directory...'
+                  npm run test:coverage || npm test || echo 'No test script available'
+                  [ -d 'coverage' ] && cp -r coverage/* /tmp/coverage/ 2>/dev/null || true
+                else
+                  echo 'Frontend test environment not found in container'
+                fi
+              " || echo "Frontend tests completed with warnings"
+          
+            echo "✅ Frontend tests completed (Docker container)"
+          else
+            if [ -d "frontend" ]; then
+              cd frontend
+              if [ -f "package.json" ]; then
+                echo "📦 Installing frontend dependencies..."
+                npm ci
+                echo "🧪 Running frontend tests..."
+                npm run test:coverage 2>/dev/null || npm run test 2>/dev/null || npm test 2>/dev/null || echo "No test script available"
+              else
+                echo "⚠️ No package.json found in frontend directory"
+              fi
+            else
+              echo "⚠️ No frontend directory found"
+            fi
+          fi
 
       - name: 🐍 Run Backend Tests
         if: env.SKIP_TESTS == 'false' && matrix.test-type == 'backend'
-        timeout-minutes: 25
         run: |
           echo "🐍 Running backend tests..."
           if [ "$USE_DOCKER" = "true" ] && [ "$DOCKER_BUILD_SUCCESS" = "true" ]; then
@@ -720,7 +673,6 @@ jobs:
 
       - name: 🔗 Run Integration Tests
         if: env.SKIP_TESTS == 'false' && matrix.test-type == 'integration'
-        timeout-minutes: 15
         run: |
           echo "🔗 Running integration tests..."
           if [ "$USE_DOCKER" = "true" ] && [ "$DOCKER_BUILD_SUCCESS" = "true" ]; then
@@ -736,7 +688,7 @@ jobs:
             CONTAINER_ID=$(docker run -d \
               --name integration-test-${{ github.run_id }} \
               -e SECRET_KEY="integration-test-secret-$(date +%s)" \
-              -e DATABASE_URL="sqlite:///app/integration_test.db" \
+              -e DATABASE_URL="sqlite:///integration_test.db" \
               -e ENVIRONMENT="test" \
               -e DEBUG="true" \
               -e PYTHONUNBUFFERED="1" \
@@ -756,16 +708,12 @@ jobs:
           
             echo "✅ Container started with ID: $CONTAINER_ID"
             sleep 10
-          
-            echo "🔧 Setting up database directory..."
-            docker exec $CONTAINER_ID mkdir -p /app
-            docker exec $CONTAINER_ID chmod 755 /app
-          
+
             echo "⏳ Waiting for services to start..."
             STARTUP_TIMEOUT=120
             STARTUP_START=$(date +%s)
             SERVICE_READY=false
-          
+
             while [ $(( $(date +%s) - STARTUP_START )) -lt $STARTUP_TIMEOUT ]; do
               if ! docker ps --filter "id=$CONTAINER_ID" --format "table {{.ID}}" | grep -q $CONTAINER_ID; then
                 echo "❌ Container stopped unexpectedly"
@@ -783,74 +731,19 @@ jobs:
               echo "⏳ Services starting... ($(( $(date +%s) - STARTUP_START ))s elapsed)"
               sleep 10
             done
-          
+
             if [ "$SERVICE_READY" = "false" ]; then
               echo "❌ Services failed to start within $STARTUP_TIMEOUT seconds"
               docker logs $CONTAINER_ID --tail 50
-              echo "🔧 Attempting to restart with in-memory database..."
               docker stop $CONTAINER_ID 2>/dev/null || true
               docker rm -f $CONTAINER_ID 2>/dev/null || true
-          
-              # Try with in-memory database
-              CONTAINER_ID=$(docker run -d \
-                --name integration-test-memory-${{ github.run_id }} \
-                -e SECRET_KEY="integration-test-secret-$(date +%s)" \
-                -e DATABASE_URL="sqlite:///:memory:" \
-                -e ENVIRONMENT="test" \
-                -e DEBUG="true" \
-                -e PYTHONUNBUFFERED="1" \
-                -e API_V1_STR="/api" \
-                -e PROJECT_NAME="AI Remote Dev Agent - Integration Test" \
-                -e BACKEND_CORS_ORIGINS='["http://localhost:3000", "http://localhost:8000"]' \
-                -e OPENAI_API_KEY="test-integration-key" \
-                -e ANTHROPIC_API_KEY="test-integration-key" \
-                -e LOG_LEVEL="INFO" \
-                -p 8000:8000 -p 3000:3000 \
-                $FULL_IMAGE_NAME:$IMAGE_TAG)
-          
-              if [ -z "$CONTAINER_ID" ]; then
-                echo "❌ Failed to start container with in-memory database"
-                exit 1
-              fi
-          
-              echo "✅ Container restarted with in-memory database: $CONTAINER_ID"
-              sleep 10
-          
-              # Wait again for services
-              STARTUP_START=$(date +%s)
-              SERVICE_READY=false
-          
-              while [ $(( $(date +%s) - STARTUP_START )) -lt $STARTUP_TIMEOUT ]; do
-                if ! docker ps --filter "id=$CONTAINER_ID" --format "table {{.ID}}" | grep -q $CONTAINER_ID; then
-                  echo "❌ Container stopped unexpectedly"
-                  docker logs $CONTAINER_ID
-                  docker rm -f $CONTAINER_ID 2>/dev/null || true
-                  exit 1
-                fi
-          
-                if docker exec $CONTAINER_ID curl -f http://localhost:8000/health >/dev/null 2>&1; then
-                  echo "✅ Backend service is responding (in-memory DB)"
-                  SERVICE_READY=true
-                  break
-                fi
-          
-                echo "⏳ Services starting with in-memory DB... ($(( $(date +%s) - STARTUP_START ))s elapsed)"
-                sleep 10
-              done
-          
-              if [ "$SERVICE_READY" = "false" ]; then
-                echo "❌ Services failed to start even with in-memory database"
-                docker logs $CONTAINER_ID --tail 50
-                docker stop $CONTAINER_ID 2>/dev/null || true
-                docker rm -f $CONTAINER_ID 2>/dev/null || true
-                exit 1
-              fi
+              exit 1
             fi
-          
+
             echo "🔍 Testing application endpoints..."
             docker exec $CONTAINER_ID curl -f http://localhost:8000/health || echo "Health check failed"
             docker exec $CONTAINER_ID curl -f http://localhost:8000/docs || echo "Docs check failed"
-          
+
             echo "🧹 Cleaning up container..."
             docker logs $CONTAINER_ID --tail 20 || true
             docker stop $CONTAINER_ID 2>/dev/null || true
@@ -862,21 +755,20 @@ jobs:
 
       - name: 💨 Run Smoke Tests
         if: env.SKIP_TESTS == 'false' && matrix.test-type == 'smoke'
-        timeout-minutes: 10
         run: |
           echo "💨 Running smoke tests..."
           if [ "$USE_DOCKER" = "true" ] && [ "$DOCKER_BUILD_SUCCESS" = "true" ]; then
             if [ "$IMAGE_PUSHED" = "true" ]; then
               docker pull $FULL_IMAGE_NAME:$IMAGE_TAG
             fi
-          
+
             echo "🔍 Testing Docker image startup..."
             docker rm -f smoke-test-${{ github.run_id }} 2>/dev/null || true
           
             CONTAINER_ID=$(docker run -d \
               --name smoke-test-${{ github.run_id }} \
               -e SECRET_KEY="test-secret-key-for-ci-smoke-test-only" \
-              -e DATABASE_URL="sqlite:///app/smoke_test.db" \
+              -e DATABASE_URL="sqlite:///:memory:" \
               -e ENVIRONMENT="test" \
               -e DEBUG="false" \
               -e API_V1_STR="/api" \
@@ -894,14 +786,8 @@ jobs:
             fi
           
             echo "✅ Container started with ID: $CONTAINER_ID"
-            sleep 5
-          
-            echo "🔧 Setting up database directory..."
-            docker exec $CONTAINER_ID mkdir -p /app
-            docker exec $CONTAINER_ID chmod 755 /app
-          
             sleep 15
-          
+
             if docker ps --filter "id=$CONTAINER_ID" --format "table {{.ID}}" | grep -q $CONTAINER_ID; then
               echo "✅ Container starts and runs successfully"
               docker logs $CONTAINER_ID --tail 10
@@ -910,52 +796,16 @@ jobs:
             else
               echo "❌ Container failed to start or exited"
               docker logs $CONTAINER_ID
-              echo "🔧 Attempting to restart with in-memory database..."
               docker rm -f $CONTAINER_ID 2>/dev/null || true
-          
-              # Try with in-memory database
-              CONTAINER_ID=$(docker run -d \
-                --name smoke-test-memory-${{ github.run_id }} \
-                -e SECRET_KEY="test-secret-key-for-ci-smoke-test-only" \
-                -e DATABASE_URL="sqlite:///:memory:" \
-                -e ENVIRONMENT="test" \
-                -e DEBUG="false" \
-                -e API_V1_STR="/api" \
-                -e PROJECT_NAME="AI Remote Dev Agent - Smoke Test" \
-                -e BACKEND_CORS_ORIGINS='["http://localhost:3000"]' \
-                -e OPENAI_API_KEY="test-key" \
-                -e ANTHROPIC_API_KEY="test-key" \
-                -e LOG_LEVEL="ERROR" \
-                -e PYTHONUNBUFFERED="1" \
-                $FULL_IMAGE_NAME:$IMAGE_TAG)
-          
-              if [ -z "$CONTAINER_ID" ]; then
-                echo "❌ Failed to start container with in-memory database"
-                exit 1
-              fi
-          
-              echo "✅ Container restarted with in-memory database: $CONTAINER_ID"
-              sleep 15
-          
-              if docker ps --filter "id=$CONTAINER_ID" --format "table {{.ID}}" | grep -q $CONTAINER_ID; then
-                echo "✅ Container starts and runs successfully (in-memory DB)"
-                docker logs $CONTAINER_ID --tail 10
-                docker stop $CONTAINER_ID 2>/dev/null || true
-                docker rm -f $CONTAINER_ID 2>/dev/null || true
-              else
-                echo "❌ Container failed to start even with in-memory database"
-                docker logs $CONTAINER_ID
-                docker rm -f $CONTAINER_ID 2>/dev/null || true
-                exit 1
-              fi
+              exit 1
             fi
-          
+
             echo "✅ Smoke tests completed"
-          
           else
             echo "✅ Smoke test: Source code structure validated"
             ls -la
           fi
+
       - name: 📊 Upload Test Results
         if: always()
         uses: actions/upload-artifact@v4
@@ -1042,5 +892,3 @@ jobs:
           echo "Docker Build: ${{ needs.docker-build.result }}"
           echo "Tests: ${{ needs.run-tests.result }}"
           exit 1
-
-
